@@ -13,10 +13,13 @@ MJCF_DIR = MODELS_DIR / "mjcf"
 URDF_DIR = MODELS_DIR / "urdf"
 OUTPUT_DIR = REPO_ROOT / "output"  # 생성물(내보낸 MJCF, 그래프, 스냅샷). git에서 제외됨
 
+# 로봇 "설명" ROS2 패키지. 실제 로봇 URDF의 단일 원본은 여기에 둔다 (ROS2·RViz·MuJoCo 공용).
+DESCRIPTION_DIR = REPO_ROOT / "ros2_ws" / "src" / "giga_description"
+
 # 개별 모델 파일
-FALLING_BOX_XML = MJCF_DIR / "falling_box.xml"
-PENDULUM_URDF = URDF_DIR / "pendulum" / "pendulum.urdf"
-SIMPLE_BIPED_URDF = URDF_DIR / "simple_biped" / "simple_biped.urdf"
+FALLING_BOX_XML = MJCF_DIR / "falling_box.xml"                  # 교육용 MJCF 예제
+PENDULUM_URDF = URDF_DIR / "pendulum" / "pendulum.urdf"         # 교육용 최소 URDF
+SIMPLE_BIPED_URDF = DESCRIPTION_DIR / "urdf" / "simple_biped.urdf"
 
 
 def output_path(filename: str) -> Path:

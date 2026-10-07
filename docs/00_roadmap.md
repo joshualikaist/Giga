@@ -50,7 +50,7 @@ flowchart LR
 
 ## Phase 3 — 최소 2족 URDF + 시뮬레이터 코어 ✅ ("제일 쉬운 URDF 실험 세팅")
 
-- 모델: `models/urdf/simple_biped/simple_biped.urdf` — 6 DoF(다리당 hip/knee/ankle pitch), 8.2 kg. 사양: [04_simple_biped_spec.md](04_simple_biped_spec.md)
+- 모델: `ros2_ws/src/giga_description/urdf/simple_biped.urdf` — 6 DoF(다리당 hip/knee/ankle pitch), 8.2 kg. 사양: [04_simple_biped_spec.md](04_simple_biped_spec.md)
 - 시뮬레이터 코어 `biped_sim/`: URDF → (freejoint·모터·IMU·바닥·충돌제외 추가) → MuJoCo 모델
 - 실험:
   - `t04`: URDF 그대로 vs 빌더 결과 비교, 모든 인덱스 표, 최종 MJCF 내보내기

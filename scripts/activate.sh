@@ -8,6 +8,8 @@
 #   2) .venv activate     → python/pip가 가상환경 것으로 바뀜 (mujoco 사용 가능)
 #   3) PYTHONNOUSERSITE=1 → ~/.local 패키지가 섞이지 않게 차단
 #   4) ros2_ws overlay    → 빌드돼 있으면 우리 ROS 패키지(giga_sim_ros 등)를 ros2 run으로 실행 가능
+#   5) ROS_DOMAIN_ID=27   → 같은 네트워크의 다른 ROS2 PC와 토픽이 섞이지 않게 하는 "채널 번호"
+#                           (이미 지정돼 있으면 그 값을 그대로 씀. docs/06_ros2_hands_on.md §1)
 # =============================================================================
 
 # source로 실행했는지 확인 (./activate.sh 로 실행하면 현재 터미널에 아무 효과가 없음)
@@ -36,6 +38,11 @@ fi
 
 source "${_BIPED_ROOT}/.venv/bin/activate"
 export PYTHONNOUSERSITE=1
+
+# 5) ROS2 통신 채널 번호. 같은 번호끼리만 서로 보인다 (0 = 모든 ROS2 PC의 기본값이라 피함).
+#    이 프로젝트의 모든 터미널은 이 스크립트를 source하므로 자동으로 같은 번호가 된다.
+#    바꾸고 싶으면 source 전에 export ROS_DOMAIN_ID=<0~101> 을 해 두면 그 값이 우선한다.
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-27}"
 
 # 4) 우리 ROS2 워크스페이스 (bash scripts/build_ros.sh로 빌드한 뒤에만 존재)
 #    local_setup.bash: 이 워크스페이스만 추가 (setup.bash는 /opt/ros를 다시 source함)

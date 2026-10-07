@@ -1,6 +1,6 @@
 # 04. simple_biped 모델 사양서
 
-> 파일: `models/urdf/simple_biped/simple_biped.urdf` / 설정: `biped_sim/robot_configs.py`
+> 파일: `ros2_ws/src/giga_description/urdf/simple_biped.urdf` / 설정: `biped_sim/robot_configs.py`
 > 목적: "URDF → MuJoCo → 관절 제어 → 서 있기"를 배우기 위한 **가장 단순한 2족 로봇**.
 > 실제 로봇 모델로 교체하기 전까지 시뮬레이터 코어를 개발·검증하는 기준 모델(baseline)입니다.
 

@@ -1,6 +1,6 @@
 # 03. URDF 기초와 MuJoCo 변환 규칙
 
-> 함께 볼 파일: `models/urdf/pendulum/pendulum.urdf`(최소 예제), `models/urdf/simple_biped/simple_biped.urdf`,
+> 함께 볼 파일: `models/urdf/pendulum/pendulum.urdf`(최소 예제), `ros2_ws/src/giga_description/urdf/simple_biped.urdf`,
 > `biped_sim/builder.py`, `tutorials/t03_urdf_pendulum.py`, `tutorials/t04_biped_inspect.py`
 >
 > 이 문서의 "MuJoCo 동작" 표는 **MuJoCo 3.15.0에서 직접 실험해 확인한 결과**입니다.
