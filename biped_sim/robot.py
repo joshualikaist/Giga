@@ -18,7 +18,7 @@ from typing import Mapping, Sequence
 import mujoco
 import numpy as np
 
-from .builder import FREEJOINT_NAME
+from .builder import FREEJOINT_NAME, IMU_SITE_NAME
 from .utils import lowest_collision_z, quat_to_rpy
 
 
@@ -110,10 +110,16 @@ class RobotInterface:
     # ------------------------------------------------------------------ 센서
     def imu(self) -> dict[str, np.ndarray]:
         """IMU 센서값. quat=(w,x,y,z), gyro=[rad/s], acc=[m/s²] (정지 상태에서 +9.81 z: 중력 반작용 포함)."""
+        acc = self.data.sensor("imu_acc").data.copy()
+        if not self.has_floating_base:
+            # MuJoCo 3.15는 world에 용접된(움직이지 않는) 바디의 가속도계 값을 0으로 낸다 (실측).
+            # 실제 IMU는 받침대에 고정돼 있어도 중력 반작용 −g를 측정하므로, 그 값을 IMU 좌표계로 넣는다.
+            rot = self.data.site_xmat[self.model.site(IMU_SITE_NAME).id].reshape(3, 3)
+            acc = rot.T @ (-self.model.opt.gravity)
         return {
             "quat": self.data.sensor("imu_quat").data.copy(),
             "gyro": self.data.sensor("imu_gyro").data.copy(),
-            "acc": self.data.sensor("imu_acc").data.copy(),
+            "acc": acc,
         }
 
     def contact_normal_force(self, body_name: str) -> float:

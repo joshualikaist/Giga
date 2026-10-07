@@ -146,3 +146,12 @@ def test_joint_state_matches_raw_arrays(floating):
     assert js["name"] == EXPECTED_JOINTS
     for i, name in enumerate(js["name"]):
         assert js["position"][i] == data.joint(name).qpos[0]
+
+
+def test_imu_accelerometer_reads_gravity_reaction_on_fixed_base():
+    """MuJoCo는 world에 용접된 바디의 가속도계를 0으로 낸다 → RobotInterface.imu()가 +g로 보정해야 함."""
+    model, _ = build_robot_model(SIMPLE_BIPED.urdf, SimConfig(fixed_base=True))
+    data = mujoco.MjData(model)
+    mujoco.mj_step(model, data, nstep=10)
+    assert np.allclose(data.sensor("imu_acc").data, 0.0)  # MuJoCo 원시값 (이 동작이 바뀌면 알려 줌)
+    np.testing.assert_allclose(RobotInterface(model, data).imu()["acc"], [0.0, 0.0, 9.81])

@@ -30,8 +30,9 @@ def ros():
     """sim_node(화면 없음, 매단 모드)를 띄우고, 테스트용 ROS 클라이언트 노드를 만든다."""
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
-    from sensor_msgs.msg import JointState
+    from sensor_msgs.msg import Imu, JointState
     from std_srvs.srv import Trigger
+    from tf2_msgs.msg import TFMessage
 
     env = dict(os.environ, ROS_DOMAIN_ID=str(DOMAIN_ID))
     proc = subprocess.Popen(
@@ -44,8 +45,11 @@ def ros():
     executor = SingleThreadedExecutor(context=ctx)
     executor.add_node(node)
 
-    states = []
+    states, imus, base_tf = [], [], []
     node.create_subscription(JointState, "joint_states", states.append, 100)
+    node.create_subscription(Imu, "imu/data", imus.append, 100)
+    node.create_subscription(TFMessage, "tf", lambda m: base_tf.extend(
+        t for t in m.transforms if t.header.frame_id == "odom" and t.child_frame_id == "base_link"), 100)
     cmd_pub = node.create_publisher(JointState, "joint_commands", 10)
     reset_cli = node.create_client(Trigger, "sim/reset")
 
@@ -71,7 +75,7 @@ def ros():
         spin_for(0.1)
     assert states, "sim_node에서 /joint_states를 받지 못함:\n" + _drain(proc)
 
-    yield dict(states=states, spin_for=spin_for, send=send, latest=latest_position,
+    yield dict(states=states, imus=imus, base_tf=base_tf, spin_for=spin_for, send=send, latest=latest_position,
                reset_cli=reset_cli, Trigger=Trigger, proc=proc, executor=executor)
 
     executor.shutdown()
@@ -122,3 +126,15 @@ def test_command_moves_only_that_joint_and_reset(ros):
     assert future.result().success
     ros["spin_for"](1.0)
     assert ros["latest"]("left_knee") == pytest.approx(0.8, abs=0.05)
+
+
+def test_imu_and_base_tf(ros):
+    """매단 로봇: 몸통이 (0,0,1)에 고정 → TF z = 1.0, 정지한 IMU 가속도계는 +9.81 (중력 반작용)."""
+    ros["spin_for"](1.0)
+    imu = ros["imus"][-1]
+    assert imu.header.frame_id == "base_link"
+    assert imu.linear_acceleration.z == pytest.approx(9.81, abs=0.05)
+    q = imu.orientation  # ROS 순서 (x,y,z,w). 똑바로 서 있으면 w ≈ 1
+    assert (q.x, q.y, q.z, q.w) == pytest.approx((0.0, 0.0, 0.0, 1.0), abs=1e-3)
+    tf = ros["base_tf"][-1].transform.translation
+    assert (tf.x, tf.y, tf.z) == pytest.approx((0.0, 0.0, 1.0), abs=1e-6)

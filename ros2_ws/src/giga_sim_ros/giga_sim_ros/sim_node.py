@@ -5,6 +5,8 @@
 그래서 제어기 노드는 상대가 이 시뮬레이터인지 실제 로봇인지 몰라도 됩니다.
 
     발행  /joint_states    sensor_msgs/JointState  관절 각도·속도·토크 (stamp = 시뮬레이션 시간)
+          /imu/data        sensor_msgs/Imu         몸통 IMU: 자세(x,y,z,w), 각속도, 가속도(중력 포함)
+          /tf              odom → base_link        몸통 위치·자세 (시뮬레이션만 아는 정답값, RViz 표시용)
           /clock           rosgraph_msgs/Clock     시뮬레이션 시간 (다른 노드는 use_sim_time:=true)
     구독  /joint_commands  sensor_msgs/JointState  position=목표각, velocity=목표속도, effort=추가 토크
                                                    (일부 관절만 보내도 됨. 안 보낸 관절은 이전 목표 유지)
@@ -19,21 +21,23 @@
     한 스레드(SingleThreadedExecutor)에서 500 Hz 타이머가 [PD → mj_step → 발행]을 반복하고,
     뷰어를 켜면 60 Hz 타이머가 화면만 갱신한다.
 """
-import signal
-
 import mujoco
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Time
-from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
+from geometry_msgs.msg import TransformStamped
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from rclpy.signals import SignalHandlerOptions
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import Imu, JointState
 from std_srvs.srv import Trigger
+from tf2_ros import TransformBroadcaster
 
 from biped_sim import (SIMPLE_BIPED, JointPDController, RobotInterface, SimConfig,
                        build_robot_model, passive_viewer, track_body_camera)
+from biped_sim.utils import quat_wxyz_to_xyzw  # MuJoCo (w,x,y,z) → ROS (x,y,z,w)
+
+from .shutdown import init_with_stop_flag
 
 VIEWER_FPS = 60.0
 
@@ -53,7 +57,8 @@ class SimNode(Node):
         # 실행할 때 --ros-args -p 이름:=값 으로 바꿀 수 있다. (ros2 param list /sim_node 로 확인)
         self.fixed_base = self.declare_parameter('fixed_base', False).value
         self.use_viewer = self.declare_parameter('viewer', True).value
-        publish_rate = self.declare_parameter('publish_rate', 500.0).value  # [Hz]
+        publish_rate = self.declare_parameter('publish_rate', 500.0).value  # [Hz] joint_states, imu
+        tf_rate = self.declare_parameter('tf_rate', 100.0).value            # [Hz] odom → base_link
         # 마지막 명령 후 이 시간[s]이 지나면 감쇠 모드(Kp=0). 0이면 끔 = 마지막 명령을 계속 유지.
         # (터미널에서 ros2 topic pub --once 로 연습할 땐 0, 제어기 노드를 붙일 땐 0.05 정도 권장)
         self.command_timeout = self.declare_parameter('command_timeout', 0.0).value
@@ -75,12 +80,15 @@ class SimNode(Node):
 
         # ---------------------------------------------------------------- ROS 인터페이스
         self.joint_state_pub = self.create_publisher(JointState, 'joint_states', 10)
+        self.imu_pub = self.create_publisher(Imu, 'imu/data', 10)
         self.clock_pub = self.create_publisher(Clock, 'clock', 10)
+        self.tf_broadcaster = TransformBroadcaster(self)
         self.create_subscription(JointState, 'joint_commands', self.on_command, 10)
         self.create_service(Trigger, 'sim/reset', self.on_reset)
 
         dt = self.model.opt.timestep
         self.publish_every = max(1, round((1.0 / dt) / publish_rate))
+        self.tf_every = max(1, round((1.0 / dt) / tf_rate))
         self.step_timer = self.create_timer(dt, self.step)
         self.viewer = None
         self.viewer_timer = None
@@ -88,7 +96,8 @@ class SimNode(Node):
         self.get_logger().info(
             f"시작: {'공중에 매단(fixed base)' if self.fixed_base else '바닥에 선(floating base)'} 로봇, "
             f"관절 {self.robot.num_joints}개, 물리 {1.0 / dt:.0f} Hz, "
-            f"/joint_states {1.0 / dt / self.publish_every:.0f} Hz, "
+            f"/joint_states·/imu/data {1.0 / dt / self.publish_every:.0f} Hz, "
+            f"TF {1.0 / dt / self.tf_every:.0f} Hz, "
             f"명령 타임아웃 {'없음' if self.command_timeout <= 0 else f'{self.command_timeout} s'}")
         self.get_logger().info(f"관절 이름: {self.robot.joint_names}")
 
@@ -127,11 +136,42 @@ class SimNode(Node):
         stamp = to_time_msg(self.data.time)
         self.clock_pub.publish(Clock(clock=stamp))
         if self.step_count % self.publish_every == 0:
-            state = self.robot.as_joint_state()
-            msg = JointState(name=state['name'], position=state['position'],
-                             velocity=state['velocity'], effort=state['effort'])
-            msg.header.stamp = stamp
-            self.joint_state_pub.publish(msg)
+            self.publish_joint_states(stamp)
+            self.publish_imu(stamp)
+        if self.step_count % self.tf_every == 0:
+            self.publish_base_tf(stamp)
+
+    # -------------------------------------------------------------------- 발행
+    def publish_joint_states(self, stamp: Time):
+        state = self.robot.as_joint_state()
+        msg = JointState(name=state['name'], position=state['position'],
+                         velocity=state['velocity'], effort=state['effort'])
+        msg.header.stamp = stamp
+        self.joint_state_pub.publish(msg)
+
+    def publish_imu(self, stamp: Time):
+        imu = self.robot.imu()  # IMU site = base_link 원점, 같은 방향
+        msg = Imu()
+        msg.header.stamp = stamp
+        msg.header.frame_id = 'base_link'
+        x, y, z, w = quat_wxyz_to_xyzw(imu['quat'])  # ⚠ 순서 변환을 빼먹으면 자세가 엉뚱해짐
+        msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w = x, y, z, w
+        msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z = imu['gyro']
+        msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z = imu['acc']
+        # covariance는 0 = "모름" (REP-145). 센서 노이즈 모델은 Phase 4에서 추가
+        self.imu_pub.publish(msg)
+
+    def publish_base_tf(self, stamp: Time):
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_link'
+        t.transform.translation.x, t.transform.translation.y, t.transform.translation.z = \
+            self.robot.base_position()
+        x, y, z, w = quat_wxyz_to_xyzw(self.robot.base_quaternion())
+        t.transform.rotation.x, t.transform.rotation.y = x, y
+        t.transform.rotation.z, t.transform.rotation.w = z, w
+        self.tf_broadcaster.sendTransform(t)
 
     # -------------------------------------------------------------------- 콜백
     def on_command(self, msg: JointState):
@@ -189,17 +229,8 @@ class SimNode(Node):
         self.viewer = None
 
 
-def _raise_keyboard_interrupt(signum, frame):
-    raise KeyboardInterrupt
-
-
 def main(args=None):
-    # 종료 신호(Ctrl+C = SIGINT, launch/kill = SIGTERM)는 rclpy가 아니라 파이썬이 받아서
-    # KeyboardInterrupt 하나의 경로로 순서대로 정리한다.
-    # rclpy 기본 신호 처리를 쓰면 신호 순간 rclpy가 먼저 종료돼 버려서, 타이머가 발행 중이면
-    # "RCLError: ... context is not valid" 트레이스가 남는 경합이 생김 (SIGINT·SIGTERM 모두 실제로 확인).
-    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
-    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    stop = init_with_stop_flag(args)  # Ctrl+C / SIGTERM → stop.set() (giga_sim_ros/shutdown.py)
     node = SimNode()
     executor = SingleThreadedExecutor()
     executor.add_node(node)
@@ -210,13 +241,12 @@ def main(args=None):
             # GLXBadContext 후 멈춤이 생기는 것을 확인함 (docs/05_ros2_bridge_plan.md §2)
             with passive_viewer(node.model, node.data) as viewer:
                 node.attach_viewer(viewer)
-                while rclpy.ok() and viewer.is_running():
+                while not stop.is_set() and viewer.is_running():
                     executor.spin_once(timeout_sec=0.01)
                 node.detach_viewer()
         else:
-            executor.spin()
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass  # Ctrl+C / 종료 신호: 아래에서 정리
+            while not stop.is_set():
+                executor.spin_once(timeout_sec=0.05)
     finally:
         executor.shutdown()
         node.destroy_node()
