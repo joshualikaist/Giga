@@ -1,43 +1,195 @@
 # Giga
 거위 2족보행로봇
 
-**biped_sim** — MuJoCo 2족 보행 로봇 시뮬레이터 (교육용 baseline)
+**MuJoCo 2족 보행 로봇 시뮬레이터 + ROS2 제어** (교육용 baseline, 패키지 이름 `biped_sim`)
 
-제작 중인 2족 보행 로봇을 **MuJoCo**로 시뮬레이션하고, 이후 **ROS2**로 제어하기 위한 기반 저장소입니다.
-처음 MuJoCo를 접하는 학생이 **환경 구축 → MuJoCo 기초 → URDF → 2족 로봇 관절 제어**까지 순서대로 따라갈 수 있게 구성했습니다.
+<table>
+<tr>
+<td align="center"><img src="docs/images/mujoco_stand.png" width="380"><br>MuJoCo (물리 시뮬레이션)</td>
+<td align="center"><img src="docs/images/rviz_sim_squat.png" width="380"><br>RViz (ROS2가 보는 로봇) — 제어기가 앉히는 중</td>
+</tr>
+</table>
 
-- 시뮬레이터: MuJoCo 3.15.0 (Python)
-- 환경: Ubuntu 22.04 + ROS2 Humble + 시스템 Python 3.10 (venv)
-- 현재 단계: Phase 3 완료, **Phase 5(ROS2 연동) 거의 완료** — 시뮬레이터가 ROS2 노드로 동작하고, 별도 제어기 노드가 토픽만으로 로봇을 세우거나 앉혔다 일으킴. RViz 시각화 포함 ([로드맵](docs/00_roadmap.md))
+이 저장소로 할 수 있는 것
+- 2족 로봇을 **MuJoCo**에서 시뮬레이션하고 (서 있기, 밀면 넘어지기, 관절 제어 실험)
+- 시뮬레이터를 **ROS2**로 조종하고 (토픽으로 관절 명령, RViz로 시각화)
+- 튜토리얼 6개로 MuJoCo를 처음부터 배우기 (`tutorials/`)
 
-## 빠른 시작
+환경: Ubuntu 22.04 + ROS2 Humble + Python 3.10 · 시뮬레이터: MuJoCo 3.15.0 · 진행 상황: [로드맵](docs/00_roadmap.md)
+
+---
+
+## 처음 시작하기 — 아무것도 몰라도 그대로 따라 하면 됩니다
+
+아래 1~8단계의 명령을 **순서대로 하나씩** 복사해서 터미널에 붙여 넣으세요.
+각 단계 끝의 **"✅ 확인"** 과 같은 결과가 나오면 다음 단계로 넘어가면 됩니다.
+처음 한 번은 ROS2 설치 때문에 인터넷 속도에 따라 수십 분이 걸릴 수 있습니다. 두 번째부터는 4단계와 7단계만 하면 됩니다.
+
+### 0단계. 준비물과 기본 용어
+
+- **Ubuntu 22.04** 가 설치된 PC (다른 버전은 안 됩니다 — ROS2 Humble이 22.04 전용)
+- 인터넷 연결, 관리자(sudo) 비밀번호, 디스크 여유 공간 약 5 GB
+
+| 용어 | 뜻 |
+|---|---|
+| 터미널 | 명령을 입력하는 창. 키보드 `Ctrl` + `Alt` + `T` 로 열립니다 |
+| 붙여넣기 | 터미널에서는 `Ctrl` + `Shift` + `V` (그냥 `Ctrl` + `V`는 안 됨) |
+| `#` 뒤의 글 | 설명(주석)입니다. 같이 붙여 넣어도 무시되니 괜찮습니다 |
+| `Ctrl` + `C` | 터미널에서 **실행 중인 프로그램을 멈춤** (복사가 아님) |
+
+### 1단계. 저장소 받기 (처음 한 번)
 
 ```bash
-# 0) 저장소 받기
+sudo apt update && sudo apt install -y git     # git 설치 (이미 있으면 그냥 넘어감)
+cd ~                                           # 홈 폴더로 이동
 git clone https://github.com/joshualikaist/Giga.git
 cd Giga
+```
 
-# 1) 처음 한 번: 가상환경 생성 + 설치 + 점검  (conda가 켜져 있으면 먼저 conda deactivate)
+✅ 확인: `ls` 를 입력하면 `README.md  docs  scripts  tutorials ...` 가 보입니다.
+
+### 2단계. ROS2 등 시스템 프로그램 설치 (처음 한 번, 관리자 비밀번호 필요)
+
+```bash
+bash scripts/install_system_deps.sh --dry-run   # 무엇을 설치할지 미리 보기만 함 (아무것도 안 바뀜)
+bash scripts/install_system_deps.sh             # 실제 설치: 'y' 입력 → 비밀번호 입력
+```
+
+- ROS2가 없는 PC면 [공식 설치 절차](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)대로 ROS2 Humble부터 설치합니다 (시스템 업데이트 포함이라 오래 걸림).
+- ROS2가 이미 있으면 이 프로젝트에 필요한데 빠진 것만 설치합니다.
+
+✅ 확인: 마지막 줄에 `완료! 다음 단계:  bash scripts/setup_env.sh` 또는 `필요한 패키지가 모두 설치되어 있습니다. 할 일이 없습니다. ✅`
+
+### 3단계. 파이썬 환경 설치 (처음 한 번)
+
+> 터미널 줄 맨 앞에 `(base)` 같은 글자가 보이면 conda가 켜져 있는 것입니다. 먼저 `conda deactivate` 를 입력해 끄세요 (글자가 사라질 때까지).
+
+```bash
 bash scripts/setup_env.sh
+```
 
-# 2) 새 터미널마다
+MuJoCo 등을 프로젝트 전용 폴더(`.venv`)에 설치하고, 마지막에 환경 점검 결과를 보여 줍니다.
+
+✅ 확인: 끝부분에 `결과: FAIL 0개` (WARN은 있어도 괜찮습니다)
+
+### 4단계. 환경 켜기 — ⚠ 새 터미널을 열 때마다 매번
+
+```bash
+cd ~/Giga
 source scripts/activate.sh
+```
 
-# 3) 튜토리얼 (순서대로)
-python tutorials/t01_hello_mujoco.py            # 뷰어
-python tutorials/t06_biped_stand.py --headless  # 뷰어 없이 숫자로
+✅ 확인:
+```
+[biped_sim] 환경 활성화 완료
+  python : /home/(사용자이름)/Giga/.venv/bin/python
+  ROS    : humble (ROS_DOMAIN_ID=27)
+  ros2_ws: ros2_ws 아직 빌드 안 됨 (bash scripts/build_ros.sh)    ← 6단계 후에는 'ros2_ws 로드됨'
+```
 
-# 4) ROS2 (처음 한 번 빌드: bash scripts/build_ros.sh → source scripts/activate.sh)
-ros2 launch giga_description display.launch.py               # URDF만 RViz로 (슬라이더로 관절 움직이기)
-ros2 launch giga_sim_ros sim.launch.py controller:=squat     # MuJoCo + RViz + 앉았다 일어서기 제어기
+> 이걸 안 하면 `No module named 'mujoco'`, `ros2: command not found` 같은 오류가 납니다.
+> `bash scripts/activate.sh` 가 아니라 반드시 **`source`** 입니다.
 
-# 5) 전체 테스트 (24개, 약 30초. ROS 연동 테스트는 ros2_ws를 빌드해야 실행됨)
+### 5단계. 첫 시뮬레이션 — MuJoCo만 (ROS 없이)
+
+```bash
+python tutorials/t01_hello_mujoco.py      # 상자와 공이 바닥에 떨어지는 창이 뜸
+```
+
+창을 닫거나 터미널에서 `Ctrl` + `C` 로 끝냅니다. 다음은 2족 로봇:
+
+```bash
+python tutorials/t06_biped_stand.py       # 로봇이 바닥에 서 있음
+```
+
+- 마우스: 왼쪽 드래그 = 회전, 오른쪽 드래그 = 이동, 휠 = 확대
+- **로봇 밀어 보기**: 몸통을 더블클릭 → `Ctrl` 을 누른 채 마우스 오른쪽 버튼으로 드래그
+- 튜토리얼은 t01~t06 순서로 하나씩 해 보세요 → [tutorials/README.md](tutorials/README.md)
+
+✅ 확인: 위 왼쪽 그림처럼 로봇이 무릎을 살짝 굽히고 서 있으면 성공
+
+### 6단계. ROS2 패키지 빌드 (처음 한 번 + `git pull`로 새 코드를 받았을 때)
+
+```bash
+bash scripts/build_ros.sh
+source scripts/activate.sh                # 빌드 결과를 지금 터미널에 반영
+```
+
+✅ 확인: `Summary: 2 packages finished`, 그리고 activate 출력에 `ros2_ws: ros2_ws 로드됨`
+
+> `colcon build` 를 직접 쓰지 마세요. 꼭 `bash scripts/build_ros.sh` 로 빌드해야 합니다 (이유: [docs/05 §2](docs/05_ros2_bridge_plan.md)).
+
+### 7단계. ROS2로 실행하기
+
+**① 로봇 모델 보기** — 물리 없이 생김새만
+
+```bash
+ros2 launch giga_description display.launch.py
+```
+
+<img src="docs/images/joint_sliders.png" height="260"> <img src="docs/images/rviz_display.png" height="260">
+
+슬라이더 창(왼쪽)을 움직이면 RViz(오른쪽)의 다리가 따라 움직입니다. `Ctrl` + `C` 로 종료.
+
+**② 시뮬레이터 + 제어기** — 로봇이 앉았다 일어서기를 반복
+
+```bash
+ros2 launch giga_sim_ros sim.launch.py controller:=squat
+```
+
+MuJoCo 창과 RViz 창이 함께 뜨고, 두 창의 로봇이 똑같이 움직이면 성공입니다 (맨 위 그림).
+`controller:=stand` 로 바꾸면 가만히 서 있고, `controller:=` 부분을 빼면 제어기 없이 시뮬레이터만 켭니다.
+종료: 터미널에서 `Ctrl` + `C` 또는 MuJoCo 창 닫기 (모든 프로그램이 함께 꺼짐).
+
+**③ 터미널에서 직접 조종** — 터미널 2개 사용
+
+```bash
+# 터미널 1 (cd ~/Giga && source scripts/activate.sh 먼저)
+ros2 run giga_sim_ros sim_node --ros-args -p fixed_base:=true      # 공중에 매달린 로봇
+```
+
+```bash
+# 터미널 2 (여기서도 cd ~/Giga && source scripts/activate.sh 먼저)
+ros2 topic pub --once /joint_commands sensor_msgs/msg/JointState "{name: [left_knee], position: [1.5]}"
+```
+
+✅ 확인: 명령을 보낼 때마다 MuJoCo 창에서 **왼쪽 무릎만** 굽혀지면 성공
+
+각 명령에서 내부적으로 무슨 일이 일어나는지, 더 많은 실습은 → **[docs/06 ROS2 실행 가이드](docs/06_ros2_hands_on.md)**
+
+### 8단계. (선택) 전부 잘 되는지 자동 점검
+
+```bash
 pytest
 ```
 
-**ROS2 실행 가이드 (어떤 명령을 실행하면 무슨 일이 일어나는지)**: [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md)
+창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-모델만 빠르게 보고 싶다면: `python -m mujoco.viewer --mjcf=ros2_ws/src/giga_description/urdf/simple_biped.urdf`
+✅ 확인: 마지막 줄에 `24 passed`
+
+### 막혔을 때
+
+| 증상 | 해결 |
+|---|---|
+| 줄 앞에 `(base)` 가 보이고 3·4단계에서 conda 경고 | `conda deactivate` 후 다시 |
+| `No module named 'mujoco'` | 4단계(`source scripts/activate.sh`)를 안 한 터미널입니다 |
+| `ros2: command not found` | 2단계를 안 했거나, 4단계를 안 한 터미널입니다 |
+| `Package 'giga_sim_ros' not found` | 6단계를 하고 `source scripts/activate.sh` 를 다시 |
+| 노드 실행 시 `No module named 'mujoco'` | `colcon build` 를 직접 썼음 → `bash scripts/build_ros.sh` |
+| 다른 터미널에서 `ros2 topic list` 에 토픽이 안 보임 | 그 터미널에서도 4단계를 해야 합니다 (같은 `ROS_DOMAIN_ID=27` 이 되도록) |
+| 창이 안 뜸 (원격 접속 등 화면 없는 환경) | 튜토리얼은 `--headless`, ROS2는 `viewer:=false rviz:=false` 를 붙여 실행 |
+| 그 밖의 문제 | `python scripts/check_env.py` 출력을 확인 → [docs/01 문제 해결](docs/01_environment.md) |
+
+### 다음에 읽을 것
+
+| 문서 | 내용 |
+|---|---|
+| [tutorials/README.md](tutorials/README.md) | MuJoCo 튜토리얼 t01~t06 (순서대로, 과제 포함) |
+| [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md) | ROS2 실행 가이드: 명령별로 무슨 일이 일어나는지 |
+| [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
+| [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
+
+---
 
 ## 폴더 구조
 
@@ -49,8 +201,9 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 ├── .gitignore
 │
 ├── scripts/                      ── 환경/도구
+│   ├── install_system_deps.sh    ← [1회, sudo] ROS2 Humble 등 apt 패키지 설치 (--dry-run으로 미리 보기)
 │   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
-│   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + PYTHONNOUSERSITE=1
+│   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + ros2_ws + ROS_DOMAIN_ID=27
 │   ├── check_env.py              ← 환경 진단 (Python/numpy/mujoco/ROS2/GL)
 │   ├── build_ros.sh              ← ros2_ws 빌드 (venv의 python -m colcon build — 그냥 colcon build 금지)
 │   └── inertia_calc.py           ← box/cylinder/sphere 관성 → URDF <inertia> 한 줄
@@ -62,7 +215,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 03_urdf_and_mujoco.md     ← URDF 문법 + MuJoCo 변환 규칙(실측) + 실제 로봇 체크리스트
 │   ├── 04_simple_biped_spec.md   ← 2족 모델 사양서 (치수·질량·관절·부호·게인 근거)
 │   ├── 05_ros2_bridge_plan.md    ← ROS2 연동 단계별 실행 계획 (사전 검증 결과, 인터페이스 명세, 결정 사항, 진행 상태)
-│   └── 06_ros2_hands_on.md       ← ROS2 첫 실습: sim_node를 터미널 ros2 명령으로 조종하기
+│   ├── 06_ros2_hands_on.md       ← ROS2 실행 가이드: 명령별로 일어나는 일 + 터미널 실습
+│   └── images/                   ← README의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
 │   ├── mjcf/

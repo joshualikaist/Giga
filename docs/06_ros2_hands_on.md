@@ -21,7 +21,7 @@
 ### 처음 한 번
 
 ```bash
-cd ~/giga                          # 저장소 루트 (본인 경로)
+cd ~/Giga                          # 저장소 루트 (본인 경로)
 source scripts/activate.sh
 bash scripts/build_ros.sh          # ros2_ws 빌드 (그냥 colcon build 금지 — 아래 주의)
 ```
@@ -330,6 +330,7 @@ rqt_graph
 | 다른 터미널에서 토픽이 안 보임 | 그 터미널에서 `source scripts/activate.sh`를 안 해서 `ROS_DOMAIN_ID`가 다름 (27 vs 0) |
 | RViz에 로봇이 안 보이거나 "No transform" | `sim.launch.py`로 띄웠는지 확인 (RViz와 robot_state_publisher가 `use_sim_time:=true`여야 시뮬레이션 시간 TF를 받음) |
 | 새로 만든 launch 파일이 안 보임 | launch·새 파일 추가 후에는 `bash scripts/build_ros.sh` 다시 실행 |
+| `ros2 topic pub`으로 `/joint_states`를 직접 보냈는데 RViz 로봇이 빨간 오류 | 메시지의 시간(stamp)이 0이라 RViz가 오래된 정보로 버림 → `"{header: auto, name: [...], position: [...]}"`처럼 `header: auto`를 넣으면 현재 시각이 채워짐 (확인함). `/joint_commands`는 시간을 안 쓰므로 상관없음 |
 
 ## 6. 다음 단계
 

@@ -3,10 +3,13 @@
 ## 1. 설치 (처음 1회)
 
 ```bash
-cd Giga                        # clone한 저장소 루트 (본인 경로로)
-conda deactivate               # conda가 켜져 있다면 (프롬프트에 (base) 등이 보이면) 끄기
-bash scripts/setup_env.sh      # .venv 생성 + 패키지 설치 + 환경 점검
+cd ~/Giga                                 # clone한 저장소 루트 (본인 경로로)
+bash scripts/install_system_deps.sh       # [sudo] ROS2 Humble 등 apt 패키지 (--dry-run으로 미리 보기)
+conda deactivate                          # conda가 켜져 있다면 (프롬프트에 (base) 등이 보이면) 끄기
+bash scripts/setup_env.sh                 # .venv 생성 + 패키지 설치 + 환경 점검
 ```
+
+처음부터 끝까지의 단계별 안내(확인 방법 포함)는 [README의 "처음 시작하기"](../README.md)를 보세요.
 
 ## 2. 매 터미널마다
 
