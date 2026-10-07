@@ -21,6 +21,15 @@ pytestmark = pytest.mark.skipif(
     reason="ROS2 환경 미로드 또는 ros2_ws 미빌드 (source scripts/activate.sh; bash scripts/build_ros.sh)")
 
 
+@pytest.fixture(autouse=True)
+def require_workspace_overlay():
+    """빌드는 했는데 현재 터미널에 로드하지 않은 경우(`ros2 launch`가 패키지를 못 찾음)를 분명히 알려 준다."""
+    this_install = str(paths.REPO_ROOT / "ros2_ws" / "install" / "giga_sim_ros")
+    if this_install not in os.environ.get("AMENT_PREFIX_PATH", "").split(":"):
+        pytest.fail("ros2_ws는 빌드됐지만 현재 터미널에 로드되지 않았습니다 → "
+                    "`source scripts/activate.sh`를 다시 실행한 뒤 pytest를 돌리세요.")
+
+
 class Observer:
     """테스트 쪽 ROS 노드: 몸통 TF와 명령 토픽을 관찰한다."""
 
