@@ -12,6 +12,7 @@
 
 이 저장소로 할 수 있는 것
 - 2족 로봇을 **MuJoCo**에서 시뮬레이션하고 (서 있기, 밀면 넘어지기, 관절 제어 실험)
+- **강화학습**으로 로봇이 스스로 균형 잡는 법을 배우게 하고 (밀려도 발을 딛어 버티기)
 - 시뮬레이터를 **ROS2**로 조종하고 (토픽으로 관절 명령, RViz로 시각화)
 - 튜토리얼 6개로 MuJoCo를 처음부터 배우기 (`tutorials/`)
 
@@ -165,7 +166,32 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `24 passed`
+✅ 확인: 마지막 줄에 `24 passed, 5 skipped` (5개는 9단계의 학습 패키지를 설치하면 실행되는 테스트 → 설치 후에는 `29 passed`)
+
+### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
+
+PD 제어만으로는 몸통을 30 N으로 밀면 넘어집니다. 강화학습으로 정책을 4분쯤 학습시키면 40 N까지 버티고,
+아무도 가르쳐 주지 않은 **발 딛기**를 스스로 찾아냅니다.
+
+```bash
+bash scripts/setup_learning.sh                                       # 학습 패키지 설치 (처음 한 번, 수 분)
+python learning/evaluate_balance.py --pretrained --view --push 40    # 학습 없이 바로: 미리 학습된 정책이 40 N을 버팀
+python learning/evaluate_balance.py --view --push 40 --baseline      # 같은 상황에서 PD만 쓰면 넘어짐
+python learning/train_balance.py                                     # 직접 학습 (CPU 약 4분)
+```
+
+✅ 확인: `train_balance.py`가 끝나면 학습 전/후 비교표가 나옵니다 (이 PC 실측)
+
+```
+밀기 세기   PD만(학습 전)   학습한 정책
+   20 N     6/6 버팀        6/6 버팀
+   30 N     0/6 버팀        6/6 버팀
+   40 N     0/6 버팀        5/6 버팀
+   50 N     0/6 버팀        4/6 버팀
+   60 N     0/6 버팀        0/6 버팀
+```
+
+강화학습 개념, 과제 설계, 결과 해석, CPU vs GPU 실측, 직접 해 볼 과제 → **[docs/07 강화학습 첫 예제](docs/07_learning.md)**
 
 ### 막혔을 때
 
@@ -186,6 +212,7 @@ pytest
 |---|---|
 | [tutorials/README.md](tutorials/README.md) | MuJoCo 튜토리얼 t01~t06 (순서대로, 과제 포함) |
 | [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md) | ROS2 실행 가이드: 명령별로 무슨 일이 일어나는지 |
+| [docs/07_learning.md](docs/07_learning.md) | 강화학습 첫 예제: 개념, 실행, 결과 해석, CPU vs GPU |
 | [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
 | [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
 
@@ -197,11 +224,13 @@ pytest
 Giga/                             (clone한 폴더 이름. 로컬에서 다른 이름이어도 무관)
 ├── README.md                     ← 지금 이 파일 (시작점)
 ├── requirements.txt              ← pip 의존성 (mujoco==3.15.0, numpy<2, -e .)
+├── requirements-learning.txt     ← (선택) 강화학습 패키지: stable-baselines3, gymnasium (torch는 setup_learning.sh가)
 ├── pyproject.toml                ← biped_sim 패키지 정의 (pip install -e . 로 어디서든 import 가능)
 ├── .gitignore
 │
 ├── scripts/                      ── 환경/도구
 │   ├── install_system_deps.sh    ← [1회, sudo] ROS2 Humble 등 apt 패키지 설치 (--dry-run으로 미리 보기)
+│   ├── setup_learning.sh         ← [선택, 1회] PyTorch(GPU/CPU 자동) + 강화학습 패키지 설치
 │   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
 │   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + ros2_ws + ROS_DOMAIN_ID=27
 │   ├── check_env.py              ← 환경 진단 (Python/numpy/mujoco/ROS2/GL)
@@ -216,6 +245,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 04_simple_biped_spec.md   ← 2족 모델 사양서 (치수·질량·관절·부호·게인 근거)
 │   ├── 05_ros2_bridge_plan.md    ← ROS2 연동 단계별 실행 계획 (사전 검증 결과, 인터페이스 명세, 결정 사항, 진행 상태)
 │   ├── 06_ros2_hands_on.md       ← ROS2 실행 가이드: 명령별로 일어나는 일 + 터미널 실습
+│   ├── 07_learning.md            ← 강화학습 첫 예제: 밀려도 넘어지지 않기 (PPO)
 │   └── images/                   ← README의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
@@ -234,7 +264,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── controllers.py            ← JointPDController (τ = Kp·e + Kd·ė + τ_ff, 토크 포화)
 │   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크)
 │   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), passive_viewer(안전한 뷰어 종료), 스냅샷, 카메라
-│   └── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
+│   ├── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
+│   └── envs/balance.py           ← 강화학습 환경 BipedBalanceEnv (Gymnasium) + 평가 함수
 │
 ├── tutorials/                    ── 학생용 실습 (순서대로)
 │   ├── README.md                 ← 각 튜토리얼의 관찰 포인트 + 과제
@@ -249,7 +280,13 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_simulator.py         ← URDF 변환 동작, 빌더, 진자 주기, 서 있기, 접촉력=무게
 │   ├── test_tutorials_and_ros.py ← 튜토리얼 실행 + ROS2 robot_state_publisher URDF 파싱
 │   ├── test_ros_sim_node.py      ← sim_node 통합: 주기, 명령, 초기화, IMU·TF, 정상 종료
-│   └── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
+│   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
+│   └── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
+│
+├── learning/                     ── 강화학습 예제 (docs/07)
+│   ├── train_balance.py          ← PPO 학습 → output/learning/ (모델, 기록, 학습 곡선, 비교표)
+│   ├── evaluate_balance.py       ← 비교표, MuJoCo 화면 재생 (--view, --baseline, --pretrained)
+│   └── pretrained/balance_ppo.zip ← 미리 학습된 모델
 │
 ├── ros2_ws/                      ── ROS2 colcon 워크스페이스 (build/ install/ log/는 git 제외)
 │   └── src/

@@ -29,7 +29,8 @@ python scripts/check_env.py    # (문제 있을 때) 환경 점검
 | Python | 3.10.12 (`/usr/bin/python3`) | ROS2 Humble이 이 Python으로 빌드됨 |
 | ROS2 | Humble (`/opt/ros/humble`) | rclpy, urdf, robot_state_publisher, rviz2 설치됨 |
 | MuJoCo | 3.15.0 (pip) | `requirements.txt`에 고정 |
-| numpy | 1.21.5 (Ubuntu apt 기본) | `numpy<2` 로 제한 |
+| numpy | 1.21.5 (Ubuntu apt 기본) | `numpy<2` 로 제한. 학습 패키지(`setup_learning.sh`)를 설치하면 venv에 1.26.4가 설치되어 우선함 — 1.x라 ROS2·MuJoCo와 호환 (확인함) |
+| (선택) PyTorch | 2.8.0 (+cu126 또는 cpu) | `scripts/setup_learning.sh`. 2.9 이상은 setuptools를 올려 ROS2 빌드를 깨뜨릴 위험 ([07 §4](07_learning.md)) |
 | GPU | GTX 1650, NVIDIA 535 드라이버, OpenGL 4.6 | 뷰어(GLFW)·오프스크린(EGL) 모두 동작 |
 
 ## 4. 왜 conda가 아니라 venv인가?

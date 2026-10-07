@@ -1,0 +1,14 @@
+# 강화학습 예제용 패키지 (선택 설치). 설치: bash scripts/setup_learning.sh
+#
+# torch는 GPU 유무에 따라 내려받는 주소(CUDA판 / CPU판)가 달라서 setup_learning.sh가 먼저 따로 설치합니다.
+# 버전 고정 이유 (2026-10-08 확인):
+#   - stable-baselines3 2.9.0 은 torch >= 2.8 필요
+#   - torch 2.8.0 은 (Python 3.10에서) setuptools를 올리지 않음 → ROS2 colcon 빌드 안전
+#     (torch 2.9 이상은 setuptools>=77을 요구해 ROS2 Humble의 ament_python 빌드를 깨뜨릴 위험)
+#   - numpy<2 유지 (ROS2 Humble 호환, docs/01 §5)
+
+stable-baselines3==2.9.0
+gymnasium==1.4.0
+tqdm
+rich
+numpy<2

@@ -46,8 +46,10 @@ def test_urdf_loads_in_ros2_robot_state_publisher(tmp_path):
         "robot_description": paths.SIMPLE_BIPED_URDF.read_text()}}}, allow_unicode=True))
 
     # 노드는 스스로 종료하지 않으므로 3초 실행 후 SIGTERM으로 정상 종료시키고 출력 전체를 수집
+    # 사용자가 실행 중인 노드(기본 ROS_DOMAIN_ID=27)와 섞이지 않도록 별도 번호에서 실행
     proc = subprocess.Popen([str(RSP), "--ros-args", "--params-file", str(params)],
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                            env=dict(os.environ, ROS_DOMAIN_ID="86"))
     try:
         output, _ = proc.communicate(timeout=3)
     except subprocess.TimeoutExpired:

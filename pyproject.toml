@@ -14,8 +14,13 @@ dependencies = [
     "numpy>=1.21,<2",  # ROS2 Humble이 numpy 1.x로 빌드되어 있음 (docs/01_environment.md)
 ]
 
-[tool.setuptools]
-packages = ["biped_sim"]
+[tool.setuptools.packages.find]
+include = ["biped_sim*"]   # biped_sim과 하위 패키지(biped_sim.envs 등)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# ROS2를 켠 터미널에서 자동 로드되는 launch_testing 플러그인은, 테스트 파일 하나가 통째로 건너뛰어지면
+# 나머지 테스트 수집까지 망가뜨린다 (ROS2 Humble, 2026-10-08 확인). 우리 테스트는 이 플러그인을 쓰지 않음.
+addopts = "-p no:launch_ros -p no:launch_testing"   # launch_ros는 launch_testing에 의존해서 함께 끔
+# Gymnasium이 관측 범위를 무한대로 둔 것에 대해 내는 일반 안내 (문제 아님)
+filterwarnings = ["ignore:.*Box observation space (minimum|maximum) value.*:UserWarning"]
