@@ -15,14 +15,15 @@
     Space: 일시정지   Backspace: 초기화   더블클릭: 물체 선택
     Ctrl + 오른쪽 드래그: 선택한 물체를 "손으로" 밀기
 
-이 파일은 일부러 biped_sim 헬퍼를 쓰지 않고 MuJoCo API만 사용합니다.
+이 파일은 시뮬레이션 루프를 보여 주기 위해 biped_sim 헬퍼 없이 MuJoCo API를 직접 씁니다.
+(예외: 뷰어 열기/닫기만 biped_sim.passive_viewer 사용 — 아래 ③ 주석 참고)
 """
 import argparse
 import time
 
 import mujoco
-import mujoco.viewer
 
+from biped_sim import passive_viewer
 from biped_sim.paths import FALLING_BOX_XML
 
 
@@ -62,16 +63,22 @@ def main():
         print("\n관찰 포인트: 상자는 z≈0.1(반 변 길이), 공은 z≈0.08(반지름)에서 멈춰야 합니다.")
         return
 
-    # ③ 시뮬레이션 루프 (뷰어). launch_passive: 루프는 우리가 돌리고 뷰어는 화면만 그림
-    with mujoco.viewer.launch_passive(model, data) as viewer:
-        while viewer.is_running():
-            step_start = time.perf_counter()
-            mujoco.mj_step(model, data)
-            viewer.sync()  # 현재 data를 화면에 반영
-            # 실시간 속도 맞추기: 계산이 timestep보다 빨리 끝나면 남은 시간만큼 대기
-            remaining = model.opt.timestep - (time.perf_counter() - step_start)
-            if remaining > 0:
-                time.sleep(remaining)
+    # ③ 시뮬레이션 루프 (뷰어). "passive" 뷰어: 루프는 우리가 돌리고 뷰어는 화면만 그림
+    #    passive_viewer = mujoco.viewer.launch_passive + 안전한 종료 처리.
+    #    (launch_passive를 그대로 쓰면 창을 닫을 때 그리기 스레드가 끝나기 전에 프로그램이 끝나
+    #     세그폴트가 날 수 있어, 스레드가 끝날 때까지 기다리게 감쌌습니다)
+    try:
+        with passive_viewer(model, data) as viewer:
+            while viewer.is_running():
+                step_start = time.perf_counter()
+                mujoco.mj_step(model, data)
+                viewer.sync()  # 현재 data를 화면에 반영
+                # 실시간 속도 맞추기: 계산이 timestep보다 빨리 끝나면 남은 시간만큼 대기
+                remaining = model.opt.timestep - (time.perf_counter() - step_start)
+                if remaining > 0:
+                    time.sleep(remaining)
+    except KeyboardInterrupt:  # 터미널에서 Ctrl+C
+        print("Ctrl+C — 종료합니다.")
 
 
 if __name__ == "__main__":

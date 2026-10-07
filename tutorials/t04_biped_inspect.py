@@ -100,8 +100,13 @@ def main():
         # 매달린(fixed base) 로봇을 MuJoCo 기본 뷰어로 열기. 슬라이더로 토크를 직접 줘 보자.
         model, _ = build_robot_model(SIMPLE_BIPED.urdf, SimConfig(fixed_base=True, base_pos=(0, 0, 1.0)))
         data = mujoco.MjData(model)
+        import signal
+
         import mujoco.viewer as mj_viewer
-        mj_viewer.launch(model, data)  # 창을 닫을 때까지 반환하지 않음
+        # launch()는 메인 스레드에서 화면 루프를 직접 돌려서, 파이썬이 Ctrl+C를 처리할 틈이 없다.
+        # Ctrl+C를 운영체제 기본 동작(즉시 종료)으로 돌려 두면 터미널에서도 끌 수 있다.
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        mj_viewer.launch(model, data)  # 창을 닫거나 Ctrl+C를 누를 때까지 반환하지 않음
         return
 
     print_raw_urdf()

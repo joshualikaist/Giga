@@ -7,6 +7,7 @@
 #   1) ROS2 Humble setup  → rclpy, 메시지 패키지 경로(PYTHONPATH)와 ros2 명령 추가
 #   2) .venv activate     → python/pip가 가상환경 것으로 바뀜 (mujoco 사용 가능)
 #   3) PYTHONNOUSERSITE=1 → ~/.local 패키지가 섞이지 않게 차단
+#   4) ros2_ws overlay    → 빌드돼 있으면 우리 ROS 패키지(giga_sim_ros 등)를 ros2 run으로 실행 가능
 # =============================================================================
 
 # source로 실행했는지 확인 (./activate.sh 로 실행하면 현재 터미널에 아무 효과가 없음)
@@ -36,8 +37,19 @@ fi
 source "${_BIPED_ROOT}/.venv/bin/activate"
 export PYTHONNOUSERSITE=1
 
+# 4) 우리 ROS2 워크스페이스 (bash scripts/build_ros.sh로 빌드한 뒤에만 존재)
+#    local_setup.bash: 이 워크스페이스만 추가 (setup.bash는 /opt/ros를 다시 source함)
+_WS_SETUP="${_BIPED_ROOT}/ros2_ws/install/local_setup.bash"
+if [[ -n "${ROS_DISTRO:-}" && -f "${_WS_SETUP}" ]]; then
+    source "${_WS_SETUP}"
+    _WS_STATUS="ros2_ws 로드됨"
+else
+    _WS_STATUS="ros2_ws 아직 빌드 안 됨 (bash scripts/build_ros.sh)"
+fi
+
 echo "[biped_sim] 환경 활성화 완료"
 echo "  python : $(command -v python)"
-echo "  ROS    : ${ROS_DISTRO:-없음}"
+echo "  ROS    : ${ROS_DISTRO:-없음} (ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0})"
+echo "  ros2_ws: ${_WS_STATUS}"
 echo "  repo   : ${_BIPED_ROOT}"
-unset _BIPED_ROOT
+unset _BIPED_ROOT _WS_SETUP _WS_STATUS

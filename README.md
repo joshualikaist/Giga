@@ -8,7 +8,7 @@
 
 - 시뮬레이터: MuJoCo 3.15.0 (Python)
 - 환경: Ubuntu 22.04 + ROS2 Humble + 시스템 Python 3.10 (venv)
-- 현재 단계: Phase 3 완료 — 최소 2족 URDF를 MuJoCo에 올려 관절 PD로 매달기/서 있기 실험까지 ([로드맵](docs/00_roadmap.md))
+- 현재 단계: Phase 3 완료, **Phase 5(ROS2 연동) 진행 중** — 시뮬레이터가 ROS2 노드(`sim_node`)로 동작하며 터미널 `ros2` 명령으로 조종 가능 ([로드맵](docs/00_roadmap.md))
 
 ## 빠른 시작
 
@@ -27,9 +27,16 @@ source scripts/activate.sh
 python tutorials/t01_hello_mujoco.py            # 뷰어
 python tutorials/t06_biped_stand.py --headless  # 뷰어 없이 숫자로
 
-# 4) 전체 테스트 (18개, 약 10초)
+# 4) ROS2로 조종하기 (처음 한 번 빌드: bash scripts/build_ros.sh → source scripts/activate.sh)
+ros2 run giga_sim_ros sim_node --ros-args -p fixed_base:=true                  # 터미널 1: 로봇
+ros2 topic pub --once /joint_commands sensor_msgs/msg/JointState \
+  "{name: [left_knee], position: [1.5]}"                                       # 터미널 2: 왼 무릎 굽히기
+
+# 5) 전체 테스트 (20개, 약 15초. ROS 연동 테스트는 ros2_ws를 빌드해야 실행됨)
 pytest
 ```
+
+ROS2 실습 안내: [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md)
 
 모델만 빠르게 보고 싶다면: `python -m mujoco.viewer --mjcf=models/urdf/simple_biped/simple_biped.urdf`
 
@@ -46,6 +53,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
 │   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + PYTHONNOUSERSITE=1
 │   ├── check_env.py              ← 환경 진단 (Python/numpy/mujoco/ROS2/GL)
+│   ├── build_ros.sh              ← ros2_ws 빌드 (venv의 python -m colcon build — 그냥 colcon build 금지)
 │   └── inertia_calc.py           ← box/cylinder/sphere 관성 → URDF <inertia> 한 줄
 │
 ├── docs/                         ── 학습 문서 (번호 순서대로)
@@ -54,7 +62,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 02_mujoco_concepts.md     ← MjModel/MjData, nq≠nv, 좌표·쿼터니언 규약, 접촉, 적분기
 │   ├── 03_urdf_and_mujoco.md     ← URDF 문법 + MuJoCo 변환 규칙(실측) + 실제 로봇 체크리스트
 │   ├── 04_simple_biped_spec.md   ← 2족 모델 사양서 (치수·질량·관절·부호·게인 근거)
-│   └── 05_ros2_bridge_plan.md    ← ROS2 기초 개념 + Phase 5 연동 설계
+│   ├── 05_ros2_bridge_plan.md    ← ROS2 연동 단계별 실행 계획 (사전 검증 결과, 인터페이스 명세, 결정 사항, 진행 상태)
+│   └── 06_ros2_hands_on.md       ← ROS2 첫 실습: sim_node를 터미널 ros2 명령으로 조종하기
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
 │   ├── mjcf/
@@ -72,7 +81,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── robot.py                  ← RobotInterface: 관절 '이름' 기반 상태 읽기/토크 쓰기 (ROS2 JointState 대응)
 │   ├── controllers.py            ← JointPDController (τ = Kp·e + Kd·ė + τ_ff, 토크 포화)
 │   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크)
-│   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), 스냅샷 저장, 카메라
+│   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), passive_viewer(안전한 뷰어 종료), 스냅샷, 카메라
 │   └── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
 │
 ├── tutorials/                    ── 학생용 실습 (순서대로)
@@ -86,7 +95,13 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │
 ├── tests/                        ── 회귀 테스트 (pytest)
 │   ├── test_simulator.py         ← URDF 변환 동작, 빌더, 진자 주기, 서 있기, 접촉력=무게
-│   └── test_tutorials_and_ros.py ← 튜토리얼 실행 + ROS2 robot_state_publisher URDF 파싱
+│   ├── test_tutorials_and_ros.py ← 튜토리얼 실행 + ROS2 robot_state_publisher URDF 파싱
+│   └── test_ros_sim_node.py      ← sim_node 통합: /joint_states 주기, 명령, 초기화, 정상 종료
+│
+├── ros2_ws/                      ── ROS2 colcon 워크스페이스 (build/ install/ log/는 git 제외)
+│   └── src/giga_sim_ros/         ← ament_python 패키지
+│       ├── package.xml, setup.py, setup.cfg, resource/
+│       └── giga_sim_ros/sim_node.py ← MuJoCo를 감싼 ROS2 노드 = "가짜 로봇 하드웨어"
 │
 ├── output/                       ── 생성물 (git 제외): 내보낸 MJCF, 그래프, 스냅샷
 ├── biped_sim.egg-info/           ── pip install -e . 가 자동 생성하는 메타데이터 (git 제외, 건드리지 않음)
@@ -97,7 +112,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 
 ```mermaid
 flowchart TD
-  T["tutorials/ · tests/<br/>(향후) ros2_ws/ 노드"] --> API["biped_sim (패키지)"]
+  T["tutorials/ · tests/<br/>ros2_ws/ sim_node"] --> API["biped_sim (패키지)"]
   API --> CFG[robot_configs] --> URDF["models/urdf/*.urdf"]
   API --> RUN[runner] & CTL[controllers] & ROB[robot] & BLD[builder]
   ROB --> BLD
@@ -124,8 +139,12 @@ flowchart TD
 | `<mujoco>` 태그가 들어간 URDF도 ROS2 `robot_state_publisher`가 정상 파싱 | `test_urdf_loads_in_ros2_robot_state_publisher` |
 | `package://` 메쉬 경로는 MuJoCo가 못 읽음 → `meshdir` + `strippath="true"`로 해결 | [docs/03](docs/03_urdf_and_mujoco.md) |
 | MJCF `euler`(기본 intrinsic xyz) ≠ URDF `rpy`(고정축 XYZ) | t02 |
+| `mujoco.viewer.launch_passive`를 그대로 쓰면 종료 시 세그폴트/X 에러/멈춤 (그리기 스레드를 안 기다림) → `biped_sim.passive_viewer`로 해결 | [docs/05 §2](docs/05_ros2_bridge_plan.md) |
+| ROS2 노드는 venv의 `python -m colcon build`로 빌드해야 MuJoCo를 쓸 수 있음 (그냥 `colcon build`는 `No module named 'mujoco'`) | `scripts/build_ros.sh` |
+| Python ROS2 노드로 500 Hz 시뮬레이션 + 발행 가능 (`/joint_states` 499.99 Hz, 제어 왕복 지연 중앙값 0.77 ms) | [docs/05 §2](docs/05_ros2_bridge_plan.md), `test_ros_sim_node.py` |
 
 ## 다음 단계
 
-[docs/00_roadmap.md](docs/00_roadmap.md)의 Phase 4(12-DoF 모델, 센서/모터 현실화)와 Phase 5([ROS2 브리지](docs/05_ros2_bridge_plan.md))를 진행합니다.
+Phase 5([ROS2 연동 계획](docs/05_ros2_bridge_plan.md)): RViz 시각화(5-1, 5-3) → IMU·TF(5-4) → 서 있기 제어기 노드(5-5) → launch 통합(5-6).
+이후 [docs/00_roadmap.md](docs/00_roadmap.md)의 Phase 4(12-DoF 모델, 센서/모터 현실화).
 실제 로봇의 URDF가 준비되면 [docs/03 §5 체크리스트](docs/03_urdf_and_mujoco.md)를 따라 `robot_configs.py`에 추가하세요.

@@ -10,9 +10,9 @@
 | 0 | 개발 환경 구축 (venv + MuJoCo + ROS2 Humble 공존) | `scripts/`, `requirements.txt` | ✅ 완료 |
 | 1 | MuJoCo 기초: MJCF, MjModel/MjData, 시뮬레이션 루프, 뷰어 | `t01`, `t02` | ✅ 완료 |
 | 2 | URDF 기초 + 시뮬레이션 검증 습관 (진자 주기 vs 이론) | `t03`, `pendulum.urdf` | ✅ 완료 |
-| 3 | **최소 2족 URDF + 시뮬레이터 코어 + 관절 PD 실험** | `t04`~`t06`, `biped_sim/` | ✅ 완료 ← 지금 여기 |
+| 3 | **최소 2족 URDF + 시뮬레이터 코어 + 관절 PD 실험** | `t04`~`t06`, `biped_sim/` | ✅ 완료 |
 | 4 | 시뮬레이터 고도화 (3D 보행용 모델, 센서·모터 현실화) | 12-DoF 모델 등 | ⬜ 다음 |
-| 5 | ROS2 브리지 (토픽으로 상태 발행/명령 수신, RViz) | `ros2_ws/` | ⬜ |
+| 5 | ROS2 브리지 (토픽으로 상태 발행/명령 수신, RViz) | `ros2_ws/`, `sim_node` | 🟡 진행 중 ← 지금 여기 |
 | 6 | (선택) ros2_control 연동 | hardware interface | ⬜ |
 | 7 | 실제 로봇 URDF로 교체 (CAD → URDF → 검증) | 실제 로봇 모델 | ⬜ |
 | 8 | 보행 제어 (정적 → ZMP/LIPM 동적 보행 → 선택: 강화학습) | 보행 제어기 | ⬜ |
@@ -48,7 +48,7 @@ flowchart LR
   원인(병합된 루트 링크와의 가짜 충돌)을 진단해 수정 → 오차 0.015%로 통과.
 - MuJoCo의 URDF 변환 규칙(실측): [03_urdf_and_mujoco.md](03_urdf_and_mujoco.md)
 
-## Phase 3 — 최소 2족 URDF + 시뮬레이터 코어 ✅ (← "제일 쉬운 URDF 실험 세팅")
+## Phase 3 — 최소 2족 URDF + 시뮬레이터 코어 ✅ ("제일 쉬운 URDF 실험 세팅")
 
 - 모델: `models/urdf/simple_biped/simple_biped.urdf` — 6 DoF(다리당 hip/knee/ankle pitch), 8.2 kg. 사양: [04_simple_biped_spec.md](04_simple_biped_spec.md)
 - 시뮬레이터 코어 `biped_sim/`: URDF → (freejoint·모터·IMU·바닥·충돌제외 추가) → MuJoCo 모델
@@ -69,13 +69,15 @@ simple_biped는 hip roll이 없어 **좌우로 체중을 옮길 수 없으므로
 5. **로깅·재생**: 실험 데이터 저장, 그래프 도구
 6. 완료 기준: 각 항목마다 t03/t06 같은 정량 검증 + 테스트 추가
 
-## Phase 5 — ROS2 브리지 ⬜
+## Phase 5 — ROS2 브리지 🟡 진행 중
 
 시뮬레이터를 ROS2 노드로 감싸서, **실제 로봇과 똑같은 토픽 인터페이스**로 제어합니다.
-상세 설계와 ROS2 기초 개념: [05_ros2_bridge_plan.md](05_ros2_bridge_plan.md)
+단계별 실행 계획(Step 5-0 ~ 5-8), 인터페이스 명세, 팀 결정 사항: [05_ros2_bridge_plan.md](05_ros2_bridge_plan.md)
 
-- 이미 준비된 것: venv 안에서 `rclpy` 동작 확인, URDF를 `robot_state_publisher`가 파싱 확인(테스트 포함),
-  `RobotInterface.as_joint_state()`가 `sensor_msgs/JointState` 모양으로 상태를 제공
+- 사전 검증 완료(2026-10-08): venv + `python -m colcon build`로 만든 ROS2 노드에서 MuJoCo 사용 가능,
+  Python 노드로 500 Hz 시뮬레이션 + 제어 명령 왕복 지연 0.77 ms(중앙값), MuJoCo 뷰어와 동시 사용 가능
+- 완료(2026-10-08): `giga_sim_ros/sim_node` — `/joint_states`(499.99 Hz), `/clock`, `/joint_commands`(검증·범위 제한·타임아웃), `/sim/reset`, 뷰어, 정상 종료, 통합 테스트
+- 지금 할 일: [06_ros2_hands_on.md](06_ros2_hands_on.md) 실습(Step 5-0) → RViz 시각화(5-1, 5-3) → IMU·TF(5-4) → 제어기 노드(5-5)
 - 사전 설치 필요(관리자 권한): `sudo apt install ros-humble-xacro ros-humble-joint-state-publisher-gui`
 
 ## Phase 6 — (선택) ros2_control ⬜

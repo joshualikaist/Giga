@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>giga_sim_ros</name>
+  <version>0.1.0</version>
+  <description>MuJoCo simulator as a ROS2 node (fake robot hardware) for the Giga biped</description>
+  <maintainer email="joshualiuniv@gmail.com">joshualikaist</maintainer>
+  <license>TODO: License declaration</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>rosgraph_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>builtin_interfaces</depend>
+
+  <!-- mujoco, numpy<2, biped_sim은 ROS(apt) 패키지가 아니라 저장소의 .venv에서 옵니다.
+       그래서 여기 적지 않고, 반드시 scripts/build_ros.sh(= venv의 python -m colcon build)로 빌드해야 합니다. -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

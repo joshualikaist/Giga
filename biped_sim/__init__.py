@@ -2,7 +2,7 @@
 
 모듈 구성 (의존 방향: 위 → 아래)
     robot_configs : 로봇별 설정 (URDF 경로, 기본 자세, 게인)
-    runner        : 시뮬레이션 루프 (뷰어/헤드리스), 스냅샷 저장
+    runner        : 시뮬레이션 루프 (뷰어/헤드리스), 안전한 뷰어 열기/닫기, 스냅샷 저장
     controllers   : 관절 PD 제어기
     robot         : 관절 '이름' 기반 상태 읽기/토크 쓰기 (ROS2 JointState와 1:1 대응)
     builder       : URDF → MuJoCo 모델 (freejoint, 바닥, 모터, IMU 추가)
@@ -14,7 +14,7 @@ from .builder import SimConfig, build_robot_model, build_robot_spec, export_mjcf
 from .controllers import JointPDController
 from .robot import RobotInterface
 from .robot_configs import SIMPLE_BIPED, RobotConfig
-from .runner import add_common_args, save_snapshot, simulate, track_body_camera
+from .runner import add_common_args, passive_viewer, save_snapshot, simulate, track_body_camera
 
 __all__ = [
     "paths",
@@ -22,5 +22,5 @@ __all__ = [
     "JointPDController",
     "RobotInterface",
     "RobotConfig", "SIMPLE_BIPED",
-    "add_common_args", "save_snapshot", "simulate", "track_body_camera",
+    "add_common_args", "passive_viewer", "save_snapshot", "simulate", "track_body_camera",
 ]

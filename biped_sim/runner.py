@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import mujoco
 
@@ -32,6 +34,34 @@ def add_common_args(parser: argparse.ArgumentParser, default_duration: float | N
     return parser
 
 
+@contextlib.contextmanager
+def passive_viewer(model: mujoco.MjModel, data: mujoco.MjData) -> Iterator[object]:
+    """mujoco.viewer.launch_passive를 안전하게 열고 닫는 with 블록.
+
+        with passive_viewer(model, data) as viewer:
+            while viewer.is_running(): ...
+
+    왜 launch_passive를 직접 쓰지 않나?
+        launch_passive는 화면 그리기를 daemon 스레드에서 돌리고, close()는 "종료 요청"만 보낸 뒤
+        바로 돌아온다. 그 스레드가 끝나기 전에 프로그램이 종료되면 세그폴트(exit 139)나
+        X 에러(GLXBadContext)가 나거나 프로세스가 멈춘다 (MuJoCo 3.15, 이 PC에서 반복 재현).
+        → 띄울 때 생긴 스레드를 기억해 두었다가, 닫은 뒤 끝날 때까지 기다린다.
+    """
+    # 화면이 없는 서버에서도 헤드리스 모드는 동작하도록 뷰어는 여기서 import.
+    # (주의: 함수 안에서 `import mujoco.viewer`라고 쓰면 `mujoco`가 지역 변수가 되어 위쪽 코드가 깨짐)
+    import mujoco.viewer as mj_viewer
+
+    before = set(threading.enumerate())
+    viewer = mj_viewer.launch_passive(model, data)
+    viewer_threads = [t for t in threading.enumerate() if t not in before]
+    try:
+        yield viewer
+    finally:
+        viewer.close()
+        for t in viewer_threads:
+            t.join(timeout=5.0)
+
+
 def simulate(model: mujoco.MjModel, data: mujoco.MjData, step_fn: StepFn | None = None,
              duration: float | None = None, headless: bool = False, realtime: bool = True,
              viewer_setup: ViewerSetup | None = None) -> None:
@@ -45,14 +75,17 @@ def simulate(model: mujoco.MjModel, data: mujoco.MjData, step_fn: StepFn | None 
             mujoco.mj_step(model, data)
         return
 
-    # 화면이 없는 서버에서도 헤드리스 모드는 동작하도록 뷰어는 여기서 import.
-    # (주의: 함수 안에서 `import mujoco.viewer`라고 쓰면 `mujoco`가 지역 변수가 되어 위쪽 코드가 깨짐)
-    import mujoco.viewer as mj_viewer
-
     # 물리는 500 Hz(0.002 s)로 돌지만 화면은 60 Hz면 충분 → 한 프레임에 여러 스텝을 묶어서 진행
     steps_per_frame = max(1, round((1.0 / 60.0) / model.opt.timestep))
 
-    with mj_viewer.launch_passive(model, data) as viewer:
+    try:
+        _viewer_loop(model, data, step_fn, duration, realtime, viewer_setup, steps_per_frame)
+    except KeyboardInterrupt:  # 터미널에서 Ctrl+C: 뷰어를 정상적으로 닫고 돌아감
+        print("\n[biped_sim] Ctrl+C — 시뮬레이션을 종료합니다.")
+
+
+def _viewer_loop(model, data, step_fn, duration, realtime, viewer_setup, steps_per_frame) -> None:
+    with passive_viewer(model, data) as viewer:
         if viewer_setup:
             with viewer.lock():
                 viewer_setup(viewer)
