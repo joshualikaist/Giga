@@ -1,0 +1,25 @@
+# Python 가상환경 (scripts/setup_env.sh가 생성)
+.venv/
+
+# 시뮬레이션 생성물 (내보낸 MJCF, 그래프, 스냅샷)
+output/
+
+# Python 캐시 / 빌드 산출물
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# ROS2 colcon 빌드 산출물 (Phase 5 이후)
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# MuJoCo 뷰어가 남기는 파일
+MUJOCO_LOG.TXT
+
+# 에디터
+.vscode/
+.idea/

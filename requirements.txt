@@ -1,0 +1,18 @@
+# biped_sim 개발 환경 (Ubuntu 22.04 + ROS2 Humble + 시스템 Python 3.10)
+# 설치: bash scripts/setup_env.sh   (직접 설치 시: pip install -r requirements.txt)
+#
+# 버전을 고정하는 이유: MuJoCo는 마이너 버전마다 API(특히 MjSpec)와 URDF 변환 동작이 바뀝니다.
+# 업그레이드할 때는 tests/를 반드시 다시 돌려 보세요.
+
+mujoco==3.15.0
+
+# numpy 2.x 금지: ROS2 Humble의 메시지 패키지(C 확장)가 numpy 1.x ABI로 빌드되어 있어
+# numpy 2가 설치되면 rclpy에서 메시지를 만들 때 crash 납니다. Ubuntu 22.04 기본은 1.21.5.
+numpy>=1.21,<2
+
+# 그래프(t05 등)와 테스트. Ubuntu에 apt로 깔린 버전이 있으면 그대로 사용됩니다.
+matplotlib>=3.5
+pytest>=6.2
+
+# 이 저장소의 biped_sim 패키지를 "편집 가능 모드"로 설치 → 어디서든 `import biped_sim` 가능
+-e .

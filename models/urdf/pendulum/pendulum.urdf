@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!--
+  pendulum.urdf — 가장 단순한 URDF: 링크 2개 + 관절 1개 (튜토리얼 t03)
+
+  구조(트리):
+      base_link  (천장에 고정된 받침대, URDF의 루트 링크)
+         └─ pivot_joint (continuous = 범위 제한 없는 회전 관절, 축 = y)
+              └─ rod_link  (길이 0.5 m, 질량 1 kg 균일 막대)
+
+  좌표계 (ROS REP-103과 MuJoCo가 동일): x = 앞, y = 왼쪽, z = 위.  단위: m, kg, rad, s.
+
+  이 파일에는 일부러 MuJoCo 전용 <mujoco> 태그를 넣지 않았습니다.
+  → t03에서 "아무 설정 없이 URDF를 MuJoCo에 넣으면 무슨 일이 생기는지" 관찰하기 위함입니다.
+     (루트 링크가 world에 병합되고, <visual>은 버려지고, 액추에이터는 0개이며,
+      병합된 받침대가 막대와 "충돌"해서 진자 주기가 엉터리가 됩니다 — 에러 메시지 없이!)
+-->
+<robot name="pendulum">
+
+  <!-- 루트 링크: URDF에서 부모가 없는 유일한 링크. MuJoCo로 불러오면 world에 고정됩니다. -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.5"/>
+      <inertia ixx="0.000520833" ixy="0" ixz="0" iyy="0.000520833" iyz="0" izz="0.000833333"/>
+    </inertial>
+    <visual>
+      <geometry><box size="0.1 0.1 0.05"/></geometry>
+    </visual>
+    <collision>
+      <!-- URDF box size = 전체 길이 (MJCF는 절반 길이). MuJoCo가 변환 시 자동으로 절반으로 바꿔 줍니다. -->
+      <geometry><box size="0.1 0.1 0.05"/></geometry>
+    </collision>
+  </link>
+
+  <!-- 진자 막대: 링크 좌표계 원점 = 회전축(pivot). 막대는 원점에서 -z 방향으로 0.5 m 뻗어 있음 -->
+  <link name="rod_link">
+    <inertial>
+      <!-- origin = 질량 중심(COM) 위치. 균일 막대이므로 길이의 절반 지점 -->
+      <origin xyz="0 0 -0.25" rpy="0 0 0"/>
+      <mass value="1.0"/>
+      <!-- COM 기준 관성. python scripts/inertia_calc.py cylinder 1.0 0.02 0.5 로 계산 -->
+      <inertia ixx="0.0209333" ixy="0" ixz="0" iyy="0.0209333" iyz="0" izz="0.0002"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.25" rpy="0 0 0"/>
+      <!-- cylinder는 길이 방향이 z축. 반지름 0.02 m, 길이 0.5 m -->
+      <geometry><cylinder radius="0.02" length="0.5"/></geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 -0.25" rpy="0 0 0"/>
+      <geometry><cylinder radius="0.02" length="0.5"/></geometry>
+    </collision>
+  </link>
+
+  <!-- 관절: 부모(base_link)와 자식(rod_link)을 잇는다.
+       origin = 부모 링크 좌표계에서 본 관절(=자식 링크 좌표계 원점)의 위치/자세
+       axis   = 자식 링크 좌표계에서 본 회전축 (0 1 0 → y축, 즉 x-z 평면에서 흔들림)
+       continuous = 회전 범위 제한 없음 (revolute는 lower/upper 필수) -->
+  <joint name="pivot_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rod_link"/>
+    <origin xyz="0 0 -0.025" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <!-- continuous 관절은 lower/upper가 없지만 effort(최대 토크)는 줄 수 있음 → MuJoCo actuatorfrcrange -->
+    <limit effort="5.0" velocity="10.0"/>
+    <!-- 감쇠/마찰을 0으로 두어 "이상적인 진자"를 만들고, 이론 주기와 비교 검증합니다 (t03) -->
+    <dynamics damping="0.0" friction="0.0"/>
+  </joint>
+
+</robot>

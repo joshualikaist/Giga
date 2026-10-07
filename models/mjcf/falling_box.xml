@@ -1,0 +1,51 @@
+<!--
+  falling_box.xml — MuJoCo "Hello World" (튜토리얼 t01, t02에서 사용)
+
+  MJCF(MuJoCo XML Format)는 MuJoCo의 "모국어" 모델 형식입니다.
+  URDF와 달리 로봇뿐 아니라 바닥, 조명, 물리 옵션, 액추에이터, 센서까지 한 파일에 모두 기술합니다.
+
+  URDF와 가장 헷갈리는 차이 두 가지 (반드시 기억!):
+    1) 각도 단위: MJCF 기본값은 "도(degree)", URDF는 "라디안"
+       (<compiler angle="radian"/>으로 바꿀 수 있음)
+    2) box 크기: MJCF size는 "절반 길이(half-size)", URDF size는 "전체 길이"
+       → 아래 box의 size="0.1 0.1 0.1"은 한 변이 20 cm인 정육면체입니다.
+-->
+<mujoco model="falling_box">
+
+  <!-- 전역 물리 옵션
+       timestep   : 한 번의 mj_step이 진행하는 시간 [s]. 0.002 s = 500 Hz
+       gravity    : 중력 가속도 벡터 [m/s^2]. MuJoCo는 z축이 위쪽(z-up)
+       integrator : 수치 적분기. implicitfast는 안정적이고 빨라서 로봇 시뮬레이션에 권장 -->
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+
+  <!-- asset: 텍스처/재질/메쉬 등 "재료"를 선언하는 곳. 바닥 무늬는 보기 좋게 하려는 것일 뿐 물리와 무관 -->
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.15 0.2"
+             width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.2"/>
+  </asset>
+
+  <!-- worldbody: 세상 그 자체. 여기에 직접 붙은 geom은 움직이지 않는 고정 물체 -->
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1" directional="true"/>
+
+    <!-- 바닥: plane 타입. size의 앞 두 값은 "그려지는" 크기이고, 충돌은 무한 평면으로 처리됨 -->
+    <geom name="floor" type="plane" size="3 3 0.1" material="grid"/>
+
+    <!-- body = 강체(rigid body) 하나. pos는 부모(여기선 world) 기준 위치 [m]
+         euler는 기본 단위가 "도" → x축으로 20도, y축으로 30도 기울인 채로 떨어뜨림 -->
+    <body name="box" pos="0 0 1.0" euler="20 30 0">
+      <!-- freejoint: 위치 3 + 회전 3 = 6 자유도. 이것이 없으면 body는 부모에 용접(고정)됩니다.
+           2족 로봇의 몸통(base)도 결국 이 freejoint로 떠 있게 됩니다 (t06 참고) -->
+      <freejoint name="box_free"/>
+      <!-- geom = 모양 + 충돌 + (기본적으로) 질량. mass를 주면 모양으로부터 관성이 자동 계산됨 -->
+      <geom name="box_geom" type="box" size="0.1 0.1 0.1" mass="1.0" rgba="0.9 0.4 0.2 1"/>
+    </body>
+
+    <body name="ball" pos="0.4 0 1.5">
+      <freejoint name="ball_free"/>
+      <geom name="ball_geom" type="sphere" size="0.08" mass="0.5" rgba="0.2 0.6 0.9 1"/>
+    </body>
+  </worldbody>
+
+</mujoco>

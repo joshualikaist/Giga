@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biped_sim"
+version = "0.1.0"
+description = "MuJoCo 기반 2족 보행 로봇 시뮬레이터 (교육용 baseline)"
+readme = "README.md"
+requires-python = ">=3.10"
+# 정확한 버전 고정은 requirements.txt에서 관리합니다.
+dependencies = [
+    "mujoco>=3.15,<3.16",
+    "numpy>=1.21,<2",  # ROS2 Humble이 numpy 1.x로 빌드되어 있음 (docs/01_environment.md)
+]
+
+[tool.setuptools]
+packages = ["biped_sim"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
