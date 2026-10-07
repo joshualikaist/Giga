@@ -69,16 +69,18 @@ simple_biped는 hip roll이 없어 **좌우로 체중을 옮길 수 없으므로
 5. **로깅·재생**: 실험 데이터 저장, 그래프 도구
 6. 완료 기준: 각 항목마다 t03/t06 같은 정량 검증 + 테스트 추가
 
-## Phase 5 — ROS2 브리지 🟡 진행 중
+## Phase 5 — ROS2 브리지 🟡 거의 완료
 
 시뮬레이터를 ROS2 노드로 감싸서, **실제 로봇과 똑같은 토픽 인터페이스**로 제어합니다.
-단계별 실행 계획(Step 5-0 ~ 5-8), 인터페이스 명세, 팀 결정 사항: [05_ros2_bridge_plan.md](05_ros2_bridge_plan.md)
+단계별 계획·인터페이스 명세·진행 상태: [05_ros2_bridge_plan.md](05_ros2_bridge_plan.md) / 실행 방법: [06_ros2_hands_on.md](06_ros2_hands_on.md)
 
-- 사전 검증 완료(2026-10-08): venv + `python -m colcon build`로 만든 ROS2 노드에서 MuJoCo 사용 가능,
-  Python 노드로 500 Hz 시뮬레이션 + 제어 명령 왕복 지연 0.77 ms(중앙값), MuJoCo 뷰어와 동시 사용 가능
-- 완료(2026-10-08): `giga_sim_ros/sim_node` — `/joint_states`(499.99 Hz), `/clock`, `/joint_commands`(검증·범위 제한·타임아웃), `/sim/reset`, 뷰어, 정상 종료, 통합 테스트
-- 지금 할 일: [06_ros2_hands_on.md](06_ros2_hands_on.md) 실습(Step 5-0) → RViz 시각화(5-1, 5-3) → IMU·TF(5-4) → 제어기 노드(5-5)
-- 사전 설치 필요(관리자 권한): `sudo apt install ros-humble-xacro ros-humble-joint-state-publisher-gui`
+- 완료(2026-10-08):
+  - `giga_description`: URDF 단일 원본, `display.launch.py`(슬라이더 + RViz)
+  - `giga_sim_ros/sim_node`: `/joint_states`(500 Hz), `/imu/data`, TF `odom→base_link`, `/clock`, `/joint_commands`(검증·범위 제한·타임아웃→감쇠 모드), `/sim/reset`
+  - `giga_sim_ros/demo_controller`: 토픽만으로 서 있기 / 앉았다 일어서기 (mujoco를 모르는 제어기 → 실제 로봇에도 그대로)
+  - `sim.launch.py`: 시뮬레이터 + robot_state_publisher + RViz + 제어기를 한 줄로
+  - 통합 테스트 (`test_ros_sim_node.py`, `test_ros_launch.py`), `ROS_DOMAIN_ID=27`
+- 남은 것: Step 5-0 사용자 실습, rosbag 기록, 게인 실시간 변경, (선택) 사용자 정의 메시지
 
 ## Phase 6 — (선택) ros2_control ⬜
 

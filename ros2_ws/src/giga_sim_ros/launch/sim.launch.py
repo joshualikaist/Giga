@@ -13,6 +13,7 @@
     demo_controller        (controller:=stand|squat) /joint_commands 발행
 
 sim_node를 뺀 모든 노드는 use_sim_time:=true → 시뮬레이션 시간(/clock)을 기준으로 동작한다.
+종료: 이 터미널에서 Ctrl+C, 또는 MuJoCo 창 닫기 → 모든 노드가 함께 종료된다.
 
 주의: launch 파일은 /usr/bin/python3로 실행되므로 mujoco/biped_sim을 import하지 않는다 (docs/05 §2).
 """
@@ -20,7 +21,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, Shutdown
 from launch_ros.actions import Node
 
 CONTROLLERS = ('none', 'stand', 'squat')
@@ -39,12 +40,14 @@ def launch_setup(context):
         robot_description = f.read()
 
     nodes = [
-        Node(package='giga_sim_ros', executable='sim_node', output='screen', parameters=[{
-            'fixed_base': as_bool[arg['fixed_base']],
-            'viewer': as_bool[arg['viewer']],
-            # 제어기 노드가 붙으면 안전장치를 켠다: 50 ms 동안 명령이 끊기면 감쇠 모드
-            'command_timeout': 0.05 if use_controller else 0.0,
-        }]),
+        # MuJoCo 창을 닫는 등 sim_node가 끝나면 launch 전체(RViz, 제어기 포함)를 함께 끝낸다
+        Node(package='giga_sim_ros', executable='sim_node', output='screen', on_exit=Shutdown(),
+             parameters=[{
+                 'fixed_base': as_bool[arg['fixed_base']],
+                 'viewer': as_bool[arg['viewer']],
+                 # 제어기 노드가 붙으면 안전장치를 켠다: 50 ms 동안 명령이 끊기면 감쇠 모드
+                 'command_timeout': 0.05 if use_controller else 0.0,
+             }]),
         Node(package='robot_state_publisher', executable='robot_state_publisher',
              parameters=[{'robot_description': robot_description, 'use_sim_time': True}]),
     ]

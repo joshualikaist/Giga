@@ -11,7 +11,7 @@ bash scripts/setup_env.sh      # .venv 생성 + 패키지 설치 + 환경 점검
 ## 2. 매 터미널마다
 
 ```bash
-source scripts/activate.sh     # ROS2 Humble + .venv + PYTHONNOUSERSITE=1 을 한 번에
+source scripts/activate.sh     # ROS2 Humble + .venv + PYTHONNOUSERSITE=1 + ros2_ws + ROS_DOMAIN_ID=27 을 한 번에
 python scripts/check_env.py    # (문제 있을 때) 환경 점검
 ```
 
@@ -83,7 +83,8 @@ ROS2 빌드 도구 `colcon`은 폴더를 뒤져 패키지를 찾는데, `.venv` 
 | 뷰어 창이 안 뜸 / GLFW 에러 | `echo $DISPLAY`가 비어 있으면 화면이 없는 것 → `--headless` 사용 |
 | `ros2 run giga_sim_ros sim_node` → `No module named 'mujoco'` | 그냥 `colcon build`로 빌드한 것. `bash scripts/build_ros.sh`로 다시 빌드 (docs/05 §2) |
 | `ros2 run`에서 `Package 'giga_sim_ros' not found` | 빌드 안 했거나 빌드 후 `source scripts/activate.sh`를 안 함 |
-| 내 `ros2 topic list`에 모르는 토픽이 보임 | 같은 네트워크의 다른 PC와 `ROS_DOMAIN_ID`가 같음 → `~/.bashrc`에 `export ROS_DOMAIN_ID=<0~101>` |
+| 내 `ros2 topic list`에 모르는 토픽이 보임 | 같은 네트워크의 다른 PC와 `ROS_DOMAIN_ID`가 같음. `activate.sh`가 27로 맞추므로, 그 터미널에서 `source scripts/activate.sh`를 했는지 확인 |
+| 시뮬레이터 토픽이 다른 터미널에서 안 보임 | 그 터미널에서 `source scripts/activate.sh`를 안 해서 `ROS_DOMAIN_ID`가 0 (시뮬레이터는 27) |
 | 직접 만든 스크립트에서 뷰어를 닫을 때 세그폴트(exit 139) / `GLXBadContext` / 멈춤 | `mujoco.viewer.launch_passive` 대신 `biped_sim.passive_viewer` 사용 (그리기 스레드가 끝날 때까지 기다림) |
 | 뷰어 실행 시 `Xlib: extension "NV-GLX" missing on display ":1"` | 무해한 메시지 (원격/가상 디스플레이에서 흔함). 뷰어는 정상 동작 |
 | 종료 시 `EGLError ... Renderer.__del__` 경고 | 렌더러를 명시적으로 닫지 않아 생기는 무해한 경고. `biped_sim.save_snapshot`은 `close()`로 처리함 |

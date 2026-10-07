@@ -1,6 +1,7 @@
 # 05. ROS2 연동 실행 계획 (Phase 5, 6 미리보기)
 
-> 상태: **진행 중** (1인 개발 기준) — Step 5-2 완료, 5-3·5-5 일부 완료 (2026-10-08).
+> 상태: **Step 5-1 ~ 5-6 완료, 5-7 대부분 완료** (1인 개발 기준, 2026-10-08). 남은 것: Step 5-0 사용자 실습, rosbag 기록, 5-8 확장.
+> 실행 방법과 각 명령에서 일어나는 일: [06_ros2_hands_on.md](06_ros2_hands_on.md)
 > "사전 검증"(§2) 항목은 이 개발 PC(Ubuntu 22.04, ROS2 Humble, MuJoCo 3.15.0)에서 직접 확인한 결과입니다.
 > 지금 바로 해 볼 수 있는 실습: [06_ros2_hands_on.md](06_ros2_hands_on.md)
 
@@ -19,25 +20,25 @@
 | 구분 | 내용 | 상태 |
 |---|---|---|
 | ROS2 기본 도구 | rclpy, tf2_ros, launch, rviz2, rosbag2, rqt | ✅ 설치됨 (`ros-humble-desktop`) |
-| 추가 apt 패키지 | `joint_state_publisher_gui`, `xacro` (Step 5-1) | ❌ 설치 필요 (sudo) |
+| 추가 apt 패키지 | `joint_state_publisher_gui`, `xacro` (Step 5-1) | ✅ 설치됨 |
 | (Phase 6, 선택) | `ros2_control`, `ros2_controllers` | ❌ 필요할 때 설치 |
 | Python 환경 | venv 안에서 `rclpy` + `mujoco` 동시 사용 | ✅ 확인됨 |
 | 시뮬레이터 코어 | `biped_sim` (RobotInterface, PD, builder) | ✅ 있음 — ROS 노드는 이걸 감싸기만 함 |
-| ROS2 노드 | `giga_sim_ros/sim_node` (`/joint_states`, `/clock`, `/joint_commands`, `/sim/reset`) | ✅ 동작 (테스트 포함) |
+| ROS2 패키지 | `giga_description` (URDF·RViz), `giga_sim_ros` (`sim_node`, `demo_controller`, `sim.launch.py`) | ✅ 동작 (테스트 포함) |
 | 결정 사항 | 실제 로봇 모터 드라이버·제어 모드·제어 주기 (§8) | ⬜ 결정 필요 |
 
 **단계**
 
 | Step | 내용 | 완료 기준 (한 줄) | 상태 |
 |---|---|---|---|
-| 5-0 | ROS2 기초 실습 (우리 `sim_node`로), `ROS_DOMAIN_ID` 정하기 | docs/06 실습 1~8을 직접 해 봄 | ⬜ 사용자 실습 |
-| 5-1 | `giga_description` 패키지 + RViz 표시 | 슬라이더로 관절을 움직이면 RViz 로봇이 따라 움직임 | ⬜ (sudo 설치 필요) |
+| 5-0 | ROS2 기초 실습 (우리 `sim_node`로), `ROS_DOMAIN_ID` 정하기 | docs/06 실습 1~8을 직접 해 봄 | 🟡 번호 27 설정 완료, 실습은 사용자 몫 |
+| 5-1 | `giga_description` 패키지 + RViz 표시 | 슬라이더로 관절을 움직이면 RViz 로봇이 따라 움직임 | ✅ (RViz 화면 캡처로 확인) |
 | 5-2 | `giga_sim_ros` 패키지 뼈대 + 빌드 규칙 | 노드가 venv의 `mujoco`를 import하며 실행됨 | ✅ |
-| 5-3 | `sim_node` v1: `/joint_states`, `/clock` | `ros2 topic hz /joint_states` ≈ 500 Hz, RViz와 MuJoCo 자세 일치 | 🟡 발행·뷰어·종료 완료 (499.99 Hz), RViz 확인 남음 |
-| 5-4 | `/imu/data`, TF `odom→base_link` | 뷰어에서 로봇을 밀어 넘어뜨리면 RViz도 똑같이 넘어짐 | ⬜ |
-| 5-5 | `/joint_commands` + 드라이버 PD + 안전장치, 데모 제어기 | ROS를 거쳐 t06과 같은 결과(서 있기, 접촉력 = 무게) | 🟡 명령 구독·PD·검증·타임아웃·`/sim/reset` 완료, 제어기 노드 남음 |
-| 5-6 | launch·파라미터·RViz 설정 통합 | 명령 한 줄로 전체 실행 | ⬜ |
-| 5-7 | 자동 테스트·성능 측정·rosbag | 주기·지연·서 있기를 `pytest`로 확인 | 🟡 `tests/test_ros_sim_node.py` (주기·명령·초기화·종료) |
+| 5-3 | `sim_node` v1: `/joint_states`, `/clock` | `ros2 topic hz /joint_states` ≈ 500 Hz, RViz와 MuJoCo 자세 일치 | ✅ 499.99 Hz, RViz 표시 확인 |
+| 5-4 | `/imu/data`, TF `odom→base_link` | 뷰어에서 로봇을 밀어 넘어뜨리면 RViz도 똑같이 넘어짐 | ✅ |
+| 5-5 | `/joint_commands` + 드라이버 PD + 안전장치, 데모 제어기 | ROS를 거쳐 t06과 같은 결과(서 있기, 접촉력 = 무게) | ✅ `demo_controller` (stand: 높이 0.588 m 유지, squat: 0.505↔0.590 m) |
+| 5-6 | launch·파라미터·RViz 설정 통합 | 명령 한 줄로 전체 실행 | ✅ `sim.launch.py` |
+| 5-7 | 자동 테스트·성능 측정·rosbag | 주기·지연·서 있기를 `pytest`로 확인 | 🟡 `test_ros_sim_node.py`, `test_ros_launch.py` 완료, rosbag 남음 |
 | 5-8 | (선택) 확장: 사용자 정의 메시지, lockstep, 발 접촉 토픽 | 필요 시 | — |
 
 ---
@@ -67,8 +68,13 @@
 | 별도 스레드에서 루프를 돌리는 방식 | 동작하지만 1스텝 비용 0.59 ms, 지연 1.18 ms로 더 느림 | **ROS 타이머 방식 채택** (더 단순하고 빠름) |
 | MuJoCo 뷰어를 켠 상태 (60 Hz 화면 갱신 타이머 추가) | 500 Hz 유지, 화면 갱신 비용 0.05 ms | 뷰어 옵션을 기본 제공 가능 |
 | `launch_passive` 뷰어를 닫고 프로그램 종료 | ❌ 세그폴트(exit 139), `GLXBadContext` X 에러, 또는 프로세스 멈춤 — **ROS와 무관하게, Ctrl+C 없이도** 재현. 원인: 뷰어의 그리기 스레드(daemon)가 끝나기 전에 프로그램이 종료됨 (`close()`는 종료 요청만 보냄) | **구현 규칙**: `biped_sim.passive_viewer`로 열기 — 닫은 뒤 그리기 스레드를 `join()`. 적용 후 sim_node·튜토리얼 모두 정상 종료 (반복 확인). 처음엔 "`with` 블록이면 괜찮다"고 판단했으나 타이밍이 운 좋게 맞았던 것이었음 |
-| rclpy 기본 신호 처리로 Ctrl+C / SIGTERM | ❌ 가끔 `RCLError: ... context is not valid` 트레이스 (SIGTERM 5회 중 2회) | **구현 규칙**: `rclpy.init(signal_handler_options=NO)` + SIGTERM도 `KeyboardInterrupt`로 바꿔 한 경로로 정리 → 12회 모두 정상 |
+| rclpy 기본 신호 처리로 Ctrl+C / SIGTERM | ❌ 가끔 `RCLError: ... context is not valid` 트레이스 (SIGTERM 5회 중 2회) | `rclpy.init(signal_handler_options=NO)`로 직접 처리. 처음엔 신호를 `KeyboardInterrupt`로 바꿨으나 아래 행의 문제로 최종 규칙은 '표시만 남기기' |
 | `ros2 topic pub --once`로 명령 | ✅ 유실 없이 전달됨 | 터미널 실습에 그대로 사용 (docs/06) |
+| 신호를 `KeyboardInterrupt`로 바꿔 종료 (위 방법) | ❌ 다른 노드가 명령을 보내는 중이면 메시지 변환 C++ 코드 안에서 터져 `RuntimeError: Unable to convert call argument`로 바뀜 (20회 중 1회) | **최종 규칙**: 신호 처리기는 표시(Event)만 남기고 메인 루프가 정리 (`giga_sim_ros/shutdown.py`) → 60회 0회 실패 |
+| 매단 모드(fixed base)의 가속도계 | ❌ MuJoCo가 world에 용접된 바디의 가속도계를 0으로 냄 (실제 IMU는 +9.81) | `RobotInterface.imu()`에서 중력 반작용으로 보정 + 회귀 테스트 |
+| launch 전체 (sim + rsp + 제어기, 화면 없이) | stand: 몸통 0.588 m·기울기 ≤ 1.0°, squat: 0.505↔0.590 m·≤ 1.4°, 명령 100 Hz, 상태 500 Hz, TF 100 Hz | 시뮬레이션 → ROS → 제어기 → ROS → 시뮬레이션 전체 경로 검증 |
+| 제어기 노드 강제 종료 (`command_timeout` 0.05) | `50 ms 동안 명령 없음 → 감쇠 모드` 경고, 서 있던 로봇은 주저앉음 (0.09 m) | 안전장치 동작 확인 (실제 드라이버의 안전 정지와 같은 동작) |
+| `ros2 run` 래퍼에만 SIGINT를 보내면 | 래퍼가 노드 종료를 무한히 기다림 | 실제 터미널 Ctrl+C는 프로세스 그룹 전체에 가므로 정상 (확인). 스크립트로 끌 땐 노드 PID나 프로세스 그룹에 보낼 것 |
 | URDF의 `<mujoco>` 태그와 ROS | `robot_state_publisher`가 정상 파싱 (기존 테스트) | 같은 URDF 파일을 그대로 공유 |
 | 네트워크 설정 | `ROS_DOMAIN_ID` 미설정(=0), `ROS_LOCALHOST_ONLY=0` | 같은 네트워크의 모든 PC와 토픽이 섞임 → Step 5-0에서 해결 |
 
@@ -102,7 +108,7 @@
 ```mermaid
 flowchart TB
   subgraph CTRL["제어 계층 (시뮬/실물 공통 코드)"]
-    C1["demo_stand_controller<br/>(Step 5-5)"]
+    C1["demo_controller<br/>(Step 5-5, stand/squat)"]
     C2["보행·균형 제어기<br/>(Phase 8)"]
   end
   subgraph HW["하드웨어 계층 (둘 중 하나만 실행)"]
@@ -178,7 +184,7 @@ SingleThreadedExecutor (메인 스레드)
 | `viewer` | true | MuJoCo 뷰어 표시 | ✅ |
 | `publish_rate` | 500.0 | `/joint_states` (+ 이후 `/imu/data`) 발행 주기 [Hz] | ✅ |
 | `command_timeout` | 0.0 | [s], 0 = 끔 | ✅ |
-| `tf_rate` | 100.0 | `odom→base_link` 발행 주기 [Hz] | ⬜ Step 5-4 |
+| `tf_rate` | 100.0 | `odom→base_link` 발행 주기 [Hz] | ✅ |
 | `kp`, `kd` | `robot_configs` 값 | 관절 순서대로의 배열, 실행 중 변경 가능하게 | ⬜ Step 5-5 |
 
 현재 파라미터는 시작할 때만 읽습니다 (실행 중 `ros2 param set`은 반영 안 됨).
@@ -191,7 +197,7 @@ SingleThreadedExecutor (메인 스레드)
 
 ---
 
-## 6. 폴더·패키지 구조 (✅ 있음 / ⬜ 예정)
+## 6. 폴더·패키지 구조
 
 ```
 Giga/
@@ -204,7 +210,7 @@ Giga/
 │   └── build_ros.sh                ✅ venv 확인 후 `python -m colcon build --symlink-install`
 └── ros2_ws/                        ✅ colcon 워크스페이스 (build/ install/ log/는 .gitignore)
     └── src/
-        ├── giga_description/       ⬜ ament_cmake: 로봇 "설명"만 담는 표준 패키지 (Step 5-1)
+        ├── giga_description/       ✅ ament_cmake: 로봇 "설명"만 담는 표준 패키지 (Step 5-1)
         │   ├── urdf/simple_biped.urdf      (models/urdf/simple_biped/에서 이동, 단일 원본 유지)
         │   ├── meshes/                     (Phase 7: 실제 로봇 메쉬)
         │   ├── rviz/display.rviz
@@ -212,15 +218,15 @@ Giga/
         └── giga_sim_ros/           ✅ ament_python: 시뮬레이터 ROS 어댑터
             ├── package.xml, setup.py, setup.cfg, resource/
             ├── giga_sim_ros/sim_node.py              ✅
-            ├── giga_sim_ros/demo_stand_controller.py ⬜ Step 5-5
-            ├── launch/sim.launch.py                  ⬜ Step 5-6
-            └── config/sim_params.yaml                ⬜ Step 5-6
+            ├── giga_sim_ros/demo_controller.py       ✅ stand / squat
+            ├── giga_sim_ros/shutdown.py              ✅ 안전한 종료 처리 (두 노드 공용)
+            └── launch/sim.launch.py                  ✅ (설정은 launch 인자로 충분해 YAML 파일은 만들지 않음)
 ```
 
-**URDF 위치를 `giga_description`으로 옮기는 이유** (권장, §8 결정 사항)
+**URDF를 `giga_description`으로 옮긴 이유** (✅ 완료)
 - launch 파일은 `/usr/bin/python3`에서 돌아 `biped_sim.paths`를 쓸 수 없으므로(§2), ROS 표준 방식인 `get_package_share_directory("giga_description")`으로 URDF를 찾아야 합니다.
 - Phase 7에서 실제 로봇 메쉬를 `package://giga_description/meshes/...`로 참조하면 RViz가 그대로 읽습니다 (MuJoCo는 `meshdir` + `strippath`로 처리, [03](03_urdf_and_mujoco.md) 참고).
-- 이동 후 `biped_sim/paths.py`의 `SIMPLE_BIPED_URDF`만 새 경로로 바꾸면 튜토리얼과 테스트는 그대로 동작합니다.
+- `biped_sim/paths.py`의 `SIMPLE_BIPED_URDF`만 새 경로로 바꿔서 튜토리얼과 테스트는 그대로 동작합니다 (`git mv`로 이동해 기록도 유지).
 
 ---
 
@@ -236,7 +242,7 @@ Giga/
 | **완료 기준** | `ros2 topic pub`으로 원하는 관절을 움직이고, `/sim/reset`으로 되돌리고, `rqt_graph`로 연결 구조를 설명할 수 있다 |
 | **주의** | Domain ID가 같으면 같은 네트워크의 다른 PC 토픽이 보입니다. 시뮬레이터가 500 Hz로 발행하므로 섞이면 네트워크 부하도 커집니다 |
 
-### Step 5-1. `giga_description` 패키지 + URDF를 RViz로 보기
+### Step 5-1. `giga_description` 패키지 + URDF를 RViz로 보기 — ✅ 완료
 
 | | |
 |---|---|
@@ -257,7 +263,7 @@ Giga/
 | **완료 기준** | `ros2 run giga_sim_ros sim_node`가 `.venv/bin/python`으로 실행되어 `mujoco 3.15.0` 로그 출력 (사전 검증과 동일 조건) |
 | **주의** | 그냥 `colcon build`를 하면 `ModuleNotFoundError: mujoco` (확인됨). 빌드 스크립트에서 venv가 켜져 있지 않으면 중단하도록 |
 
-### Step 5-3. `sim_node` v1 — `/joint_states`, `/clock` — 🟡 RViz 확인만 남음
+### Step 5-3. `sim_node` v1 — `/joint_states`, `/clock` — ✅ 완료
 
 | | |
 |---|---|
@@ -267,7 +273,7 @@ Giga/
 | **완료 기준** | `ros2 topic hz /joint_states` ≈ 500 Hz, `ros2 topic echo /clock`이 시뮬레이션 시간과 일치, robot_state_publisher + RViz(`use_sim_time:=true`)에 MuJoCo와 같은 다리 자세가 보임, Ctrl+C로 깔끔히 종료 |
 | **주의** | 뷰어는 반드시 `biped_sim.passive_viewer`로 (§2: 그리기 스레드를 기다리지 않으면 종료 시 세그폴트) |
 
-### Step 5-4. `/imu/data`와 TF `odom → base_link`
+### Step 5-4. `/imu/data`와 TF `odom → base_link` — ✅ 완료
 
 | | |
 |---|---|
@@ -277,27 +283,27 @@ Giga/
 | **완료 기준** | MuJoCo 뷰어에서 몸통을 Ctrl+드래그로 밀어 넘어뜨리면 RViz 로봇도 똑같이 넘어짐. 정지 시 `/imu/data`의 가속도 z ≈ +9.81 |
 | **주의** | 쿼터니언 순서를 틀리면 RViz에서 로봇이 엉뚱하게 회전합니다 → 변환 함수를 단위 테스트로 고정 |
 
-### Step 5-5. `/joint_commands` + 드라이버 PD + 데모 제어기 — 🟡 제어기 노드 남음
+### Step 5-5. `/joint_commands` + 드라이버 PD + 데모 제어기 — ✅ 완료 (게인 실시간 변경은 남음)
 
 | | |
 |---|---|
 | **목표** | 별도 프로세스의 제어기가 토픽만으로 로봇을 제어한다 (Phase 5의 핵심) |
 | **배우는 개념** | subscriber, 콜백, 메시지 검증, 타임아웃 기반 안전장치, 여러 노드 협업 |
-| **할 일** | ① `sim_node`: `/joint_commands` 구독 → 이름으로 매칭 → PD 적용, §5.2의 타임아웃·감쇠 모드, `/sim/reset` 서비스 ② `demo_stand_controller`: `/joint_states`를 받아 home 자세 명령 발행 (t06의 ROS 버전) ③ `ros2 param set /sim_node kp ...`로 게인 실시간 변경 |
+| **할 일** | ① `sim_node`: `/joint_commands` 구독 → 이름으로 매칭 → PD 적용, §5.2의 타임아웃·감쇠 모드, `/sim/reset` 서비스 ② `demo_controller`: `/joint_states`를 받아 home 자세(stand) 또는 앉았다 일어서기(squat) 명령 발행 ③ `ros2 param set /sim_node kp ...`로 게인 실시간 변경 |
 | **완료 기준** | 제어기를 켜면 로봇이 서 있고(몸통 높이 ≈ 0.588 m, 기울기 < 3°), `command_timeout:=0.05`로 실행한 상태에서 제어기를 끄면 50 ms 뒤 감쇠 모드로 전환되며 경고 로그 출력 |
 | **주의** | 명령은 다음 스텝에 반영되는 1스텝 지연이 있음 (사전 측정 왕복 0.77 ms < 2 ms). 실제 로봇은 지연이 더 크므로 Phase 4에서 지연을 일부러 넣어 보는 실험 권장 |
 
-### Step 5-6. launch·파라미터·RViz 통합
+### Step 5-6. launch·파라미터·RViz 통합 — ✅ 완료
 
 | | |
 |---|---|
 | **목표** | 명령 한 줄로 전체 실행, 설정은 파일로 관리 |
 | **배우는 개념** | launch argument, 파라미터 YAML, 조건부 노드 실행 |
-| **할 일** | `sim.launch.py`: 인자 `fixed_base`, `viewer`, `rviz`, `controller` → sim_node + robot_state_publisher + (rviz2) + (demo 제어기), 모든 노드 `use_sim_time:=true`. `config/sim_params.yaml` |
+| **할 일** | `sim.launch.py`: 인자 `fixed_base`, `viewer`, `rviz`, `controller` → sim_node + robot_state_publisher + (rviz2) + (demo 제어기), sim_node 외 모든 노드 `use_sim_time:=true`. sim_node가 끝나면(MuJoCo 창 닫기) launch 전체 종료 |
 | **완료 기준** | `ros2 launch giga_sim_ros sim.launch.py` / `... fixed_base:=true viewer:=false` 등 조합이 모두 동작 |
 | **주의** | launch 파일에서 `biped_sim`이나 `mujoco`를 import하지 않습니다 (§2 빌드 규칙 2) |
 
-### Step 5-7. 자동 테스트·성능 측정·기록
+### Step 5-7. 자동 테스트·성능 측정·기록 — 🟡 rosbag 남음
 
 | | |
 |---|---|
@@ -326,8 +332,8 @@ Giga/
 | **모터 제어 모드** (토크 / 위치 / 드라이버 내부 PD) | `/joint_commands` 메시지 설계가 바뀜 | 드라이버 내부 PD 가정 (q_des, dq_des, τ_ff + Kp/Kd) — 현재 계획 |
 | **목표 제어 주기** | 시뮬레이터 timestep과 성능 요구가 정해짐 | 500 Hz (현재). 1 kHz가 필요하면 Step 5-7에서 재측정 |
 | **로봇 탑재 컴퓨터와 ROS2 배포판** | 개발 PC(Humble)와 맞아야 같은 코드를 그대로 씀 | Humble 유지 |
-| **URDF를 `giga_description`으로 이동** | launch·RViz·메쉬 경로를 ROS 표준으로 처리 | 이동 (§6) |
-| **`ROS_DOMAIN_ID`** | 연구실 네트워크의 다른 PC와 토픽 섞임 방지 | 0~101 중 하나를 정해 `~/.bashrc`에 (Step 5-0) |
+| **URDF를 `giga_description`으로 이동** | launch·RViz·메쉬 경로를 ROS 표준으로 처리 | ✅ 이동 완료 (§6) |
+| **`ROS_DOMAIN_ID`** | 연구실 네트워크의 다른 PC와 토픽 섞임 방지 | ✅ 27 (`scripts/activate.sh`가 설정. 실제 로봇 PC도 같은 번호로) |
 | **패키지 이름 접두어** | 이후 모든 패키지·토픽 이름에 영향 | `giga_` |
 
 ---
@@ -339,13 +345,13 @@ Giga/
 | 그냥 `colcon build` | `ModuleNotFoundError: No module named 'mujoco'` | `scripts/build_ros.sh`만 사용 (venv 확인 후 `python -m colcon build`) | 확인됨 |
 | launch 파일에서 venv 패키지 import | launch 실행 실패 | launch 파일은 ROS API만 사용, URDF는 description 패키지에서 | 확인됨 |
 | 뷰어 종료 방식 | 세그폴트, `GLXBadContext`, 프로세스 멈춤 | `biped_sim.passive_viewer` (그리기 스레드 join) + ROS 종료 전에 뷰어 닫기 | 확인·해결됨 |
-| rclpy 신호 처리 경합 | 종료 시 가끔 `RCLError` 트레이스 | `SignalHandlerOptions.NO` + SIGTERM→KeyboardInterrupt | 확인·해결됨 |
-| 연구실 네트워크 토픽 섞임 | 남의 로봇이 내 RViz에 보이거나 명령이 섞임 | 나만의 `ROS_DOMAIN_ID`, 필요 시 `ROS_LOCALHOST_ONLY=1` | 현재 미설정 확인 |
+| rclpy 신호 처리 경합 | 종료 시 가끔 `RCLError` / `RuntimeError` 트레이스 | `SignalHandlerOptions.NO` + 신호 처리기는 Event만 set, 메인 루프가 정리 (`giga_sim_ros/shutdown.py`) | 확인·해결됨 (60회 0회) |
+| 연구실 네트워크 토픽 섞임 | 남의 로봇이 내 RViz에 보이거나 명령이 섞임 | `ROS_DOMAIN_ID=27` (activate.sh), 필요 시 `ROS_LOCALHOST_ONLY=1` | ✅ 해결 |
 | 쿼터니언 순서 (MuJoCo wxyz ↔ ROS xyzw) | RViz에서 로봇이 이상하게 회전 | `biped_sim.utils` 변환 함수 + 단위 테스트 | 기존 테스트 있음 |
 | 시간 기준 불일치 | TF 외삽 오류, RViz 경고 | 모든 stamp = `data.time`, 모든 노드 `use_sim_time:=true` | 설계 |
 | Python 성능 한계 (12-DoF, 1 kHz, 센서 증가 시) | 실시간 배율 < 1 | 단계마다 측정. 부족하면 발행 주기 낮추기 → 핵심 루프 C++ 노드화 순으로 검토 | 현재 여유 큼 (0.22 ms/스텝) |
 | numpy 2 유입 | ROS 메시지 생성 시 크래시 | `numpy<2` 고정 유지 | 기존 설정 |
-| 강제 종료 시 예외 트레이스 | 로그가 지저분해 진짜 오류를 놓침 | `KeyboardInterrupt`, `ExternalShutdownException` 처리 | 확인됨 |
+| 강제 종료 시 예외 트레이스 | 로그가 지저분해 진짜 오류를 놓침 | 신호 처리기는 표시만, 메인 루프가 정리 (`giga_sim_ros/shutdown.py`) | 확인·해결됨 |
 | KDL 경고 (root link inertia) | robot_state_publisher 시작 시 WARN | 무해 (TF 계산에 영향 없음, [03](03_urdf_and_mujoco.md) §4) | 확인됨 |
 
 ---
