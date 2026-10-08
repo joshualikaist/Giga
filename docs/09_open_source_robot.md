@@ -559,6 +559,36 @@ python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --fri
   정격 0.64 N·m 아래로 가려면 무릎을 0.6 rad 이하로 덜 굽혀 몸통을 약 5 mm 높여야 합니다 (`knee_sweep`: 무릎 0.61 rad → 0.62 N·m).
   학습이 아니라 home 자세·기준 높이(`nominal_height`) 설계의 문제입니다.
 
+### 9.5 서 있는 자세 바꾸기 (`--home-knee 0.6`)
+
+§9.4의 knee 토크는 home 자세(무릎 0.8 rad)의 정적 토크 0.74 N·m에 가까웠습니다. §8.3의 `knee_sweep`대로 무릎을 0.6 rad로 덜 굽히면
+정적 토크가 0.61 N·m로 정격(0.64) 아래가 됩니다 (몸통 기준 높이 0.180 → 0.185 m, 자동 계산). `--home-knee`는 학습 설정에 저장되므로
+재생·분석도 같은 자세를 쓰고, 로봇 설정(`OPEN_DUCK_MINI`)은 그대로라 예전 정책도 그대로 재생됩니다.
+§9.4 정책을 새 자세에 넣기만 해도 10초 버팀·0.148 m/s였으므로 거기서 이어서 2,211만 스텝 (창을 띄워 2시간).
+
+```bash
+python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --friction 0.4 1.0 --terrain rough \
+    --home-knee 0.6 --reward torque=-0.01 --steps 20000000 --name duck_knee06 --watch \
+    --init-from output/learning/261008_232319_duck_torque/checkpoints/step_00022118400.pkl
+```
+
+| 평지에서 걸음 (실측 서보) | §9.4 (무릎 0.8) | **무릎 0.6** |
+|---|---|---|
+| 걸을 때 평균 무릎 각도 | 49° (0.85 rad) | **38° (0.66 rad)** |
+| 정적 토크 knee (계산 1) | 0.74 N·m | **0.61 N·m** |
+| RMS 토크 hip_roll / knee / ankle | 0.91 / 0.94 / 0.84 | 0.94 / **0.89** / **0.79** |
+| 데이터시트 한계 밖 hip_roll / knee | 6~9 % / 1~8 % | 5~8 % / 3~5 % |
+| 발 들기 / 절뚝임 점수 | 1.4 cm / 13.2 % | 1.3 cm / 11.5 % |
+
+지형 시험(같은 조건)은 거의 그대로입니다: 장애물 제외 120번 중 109 → 108, 장애물 40번 중 7 → 6.
+
+- **자세는 바뀌었습니다** (걸을 때 무릎 0.85 → 0.66 rad). 그런데 무릎 RMS 토크는 5 %만 줄었습니다 (정적 계산은 18 % 감소).
+  몸무게를 버티는 정적 토크보다 **움직임(다리 흔들기·밀어내기·균형 잡기)에 드는 동적 토크**의 몫이 이제 더 크다는 뜻입니다.
+- **hip_roll은 무릎 자세와 상관이 없습니다.** 오리에는 발목 roll 관절이 없어서 옆으로 기울어지는 힘을 hip_roll 혼자 버팁니다.
+  토크 팔 = 고관절 축(y = 3.5 cm)과 몸통 쪽 무게중심(y = −1.9 cm, 반대쪽 다리 포함) 사이 5.4 cm → 0.90 N·m.
+  **무게중심을 디딤 발 쪽으로 옮길수록 줄어듭니다**: 1.2 cm(지금 걸음) → 0.70, 2.4 cm(§8.6 LIPM 상한) → 0.50 N·m (정격 아래).
+  §8.6에서 '스타일'이라고 본 좌우 흔들림이, 무게중심 이동만큼은 hip_roll 부담을 덜어 주는 데 필요한 것입니다.
+
 ## 10. 관련 파일
 
 | 파일 | 역할 |
@@ -575,6 +605,7 @@ python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --fri
 | `tests/test_walk_mjx.py::test_open_duck_walk_env` | 오리 보행 환경: 관측 크기, 좌우 부호표, 서 있기, 일반 MuJoCo와 관측 일치 |
 | `learning/feasibility.py`, `tests/test_walk_mjx.py::test_feasibility_estimates_for_open_duck` | 동역학 한계 계산(토크·턱·경사·속도·흔들림)과 정책 측정 비교 (§8) |
 | `biped_sim/envs/walk_mjx.py` `SERVO_MODELS`·`with_servo`, `friction_range` / `tests/test_walk_mjx.py::test_open_duck_servo_model_and_random_friction` | 서보 모델(ideal / open_duck 실측)과 바닥 마찰 무작위 (§9) |
+| `walk_mjx.with_home_knee` (`--home-knee`) / `tests/test_walk_mjx.py::test_open_duck_home_knee_posture` | 서 있는 자세(무릎 각도) 바꾸기, 기준 높이 자동 (§9.5) |
 
 출처: [Open_Duck_Mini](https://github.com/apirrone/Open_Duck_Mini) (Apache-2.0),
 [sim2real 메모](https://github.com/apirrone/Open_Duck_Mini/blob/v2/docs/sim2real.md),
