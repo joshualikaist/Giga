@@ -229,6 +229,8 @@ python learning/train_walk_gpu.py --watch     # 3,000만 스텝, 약 20~35분 (�
 python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보기
 ```
 
+> `source scripts/activate_gpu.sh`를 잊고 ROS용 터미널(`.venv`)에서 실행해도, 보행 스크립트가 알아서 GPU 학습 환경으로 다시 실행합니다.
+
 `--watch`를 붙이면 **학습 화면**(MuJoCo 창)이 함께 열립니다. 창을 한 번 클릭한 뒤 **Enter 키**로 두 화면을 오갑니다.
 
 | 화면 | 보이는 것 |
@@ -414,6 +416,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── train_walk_gpu.py         ← GPU 보행 학습 (Brax PPO), TensorBoard, 보상 바꾸기(--reward), 학습 화면(--watch)
 │   ├── play_walk.py              ← 보행 정책 학습 화면(--live)·재생(--view)
 │   ├── walk_tools.py             ← 보행 공용 도구: 정책 불러오기, 재생기, 에피소드 기록, 걸음 수치
+│   ├── gpu_env.py                ← GPU 학습 환경 확인 (다른 터미널에서 실행하면 .venv-mjx로 다시 실행)
 │   ├── live_dashboard.py         ← MuJoCo 창 안의 학습 그래프·발 접촉 그래프 (Enter로 화면 전환)
 │   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
 │   ├── terrain_trial.py          ← 울퉁불퉁한 지형 실험: MuJoCo 화면에서 에피소드마다 새 지형 (--headless는 통계)

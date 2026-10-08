@@ -18,6 +18,10 @@ from pathlib import Path
 
 os.environ.setdefault("JAX_PLATFORMS", "cpu")   # 정책 계산은 아주 작아서 CPU로 충분 (학습 중인 GPU와 겹치지 않게)
 
+from gpu_env import ensure_gpu_env  # noqa: E402
+
+ensure_gpu_env()   # ROS용 .venv에서 실행했으면 .venv-mjx로 다시 실행 (JAX·Brax가 거기에만 있음)
+
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 

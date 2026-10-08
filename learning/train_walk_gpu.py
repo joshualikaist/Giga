@@ -44,12 +44,15 @@ from pathlib import Path
 
 import numpy as np
 
+from gpu_env import ensure_gpu_env
+
 from biped_sim import paths
 
 RUNS_DIR = paths.OUTPUT_DIR / "learning"
 
 
 def main():
+    ensure_gpu_env()   # ROS용 .venv에서 실행했으면 .venv-mjx로 다시 실행
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--steps", type=int, default=30_000_000, help="총 학습 스텝 (제어 스텝, 1스텝 = 0.02 s)")
