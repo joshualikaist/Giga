@@ -33,7 +33,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     from brax.envs.base import Env, State
     from mujoco import mjx
 
-from ..builder import FREEJOINT_NAME, SimConfig, build_robot_spec
+from ..builder import FREEJOINT_NAME, build_robot_spec
 from ..robot_configs import SIMPLE_BIPED
 
 PHYSICS_DT = 0.004          # [s]
@@ -63,13 +63,16 @@ REWARD_WEIGHTS = {
     "alive": 0.5,               # 살아 있으면 매 스텝 +
     "flight": -1.0,             # 두 발이 모두 공중이면 1 : 뛰지 말고 걷기
     "gait_phase": 1.0,          # 걸음 박자대로 좌우 발이 번갈아 딛으면 1 (두 발 평균)
-    "heading": 0.0,             # (방향 각도)² : 처음 방향(+x)을 유지하기. 기본 0 = 꺼짐 (docs/08 §5 실험)
-    "symmetry": 0.0,            # Σ(왼다리 관절 − 반 박자 전 오른다리 관절)² + 반대 [rad²] : 두 다리가 같은 동작을
-                                #   반 박자 어긋나게 하기 (절뚝임 방지). 기본 0 = 꺼짐 (docs/08 §6)
-    "step_length": 0.0,         # 한 걸음 착지할 때 반대 발보다 앞에 놓은 거리 / 목표 보폭 (목표에서 1, 넘어도 1)
-                                #   (MIN_STEP_AIR 이상 공중에 있던 착지만) (docs/08 §6)
+    "heading": -3.0,            # (방향 각도)² : 처음 방향(+x)을 유지하기
+    "symmetry": -2.0,           # Σ(왼다리 관절 − 반 박자 전 오른다리 관절)² + 반대 [rad²] : 두 다리가 같은 동작을
+                                #   반 박자 어긋나게 하기 (절뚝임 방지)
+    "step_length": 5.0,         # 한 걸음 착지할 때 반대 발보다 앞에 놓은 거리 / 목표 보폭 (목표에서 1, 넘어도 1)
+                                #   (MIN_STEP_AIR 이상 공중에 있던 착지만)
 }
-# flight·gait_phase가 없으면(0으로 두면) 두 발을 다 띄우고 깡충깡충 뛰는 걸음을 배움 (실측, docs/08 §5.1).
+# 보상을 하나씩 더해 온 과정 (실측, docs/08 §5~6):
+#   flight·gait_phase가 없으면 → 두 발을 다 띄우고 깡충깡충 뜀 (공중 70 %)
+#   symmetry·step_length·heading이 없으면 → 오른다리는 늘 앞, 왼다리는 늘 뒤인 절뚝이는 걸음 (절뚝임 점수 40 %)
+#   모두 켜고 처음부터 학습 → 대칭으로 걸음 (절뚝임 1.8 %, 좌우 다리 차이 0.8°)
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
 GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry")
@@ -78,12 +81,8 @@ GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg
 def build_mjx_model() -> tuple[mujoco.MjModel, dict]:
     """GPU 학습용 MuJoCo 모델 (발-바닥 충돌만) + 관절 인덱스 정보."""
     cfg = SIMPLE_BIPED
-    spec = build_robot_spec(cfg.urdf, SimConfig(fixed_base=False, timestep=PHYSICS_DT,
-                                                home_joint_pos=cfg.home_pose))
-    for g in spec.geoms:
-        if (g.contype or g.conaffinity) and g.name != "floor" and g.parent.name not in cfg.foot_bodies:
-            g.contype = 0
-            g.conaffinity = 0
+    spec = build_robot_spec(cfg.urdf, cfg.sim_config(fixed_base=False, timestep=PHYSICS_DT,
+                                                     collision_bodies=cfg.foot_bodies))
     model = spec.compile()
     model.opt.iterations = 4
     model.opt.ls_iterations = 8

@@ -166,7 +166,9 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `24 passed, 10 skipped`. 건너뛴 10개 중 5개는 9단계의 학습 패키지를 설치하면 실행되고(→ `29 passed, 5 skipped`), 5개는 10단계의 GPU 학습 환경에서 따로 실행합니다 (`source scripts/activate_gpu.sh && pytest tests/test_walk_mjx.py`).
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `24 passed, 15 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(5개, 그 환경에서
+`pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
 
@@ -223,7 +225,7 @@ ROS2 환경과 섞이지 않도록 **별도 가상환경(`.venv-mjx`)** 을 씁�
 ```bash
 bash scripts/setup_gpu_learning.sh            # GPU 학습 환경 설치 (처음 한 번, 약 3 GB)
 source scripts/activate_gpu.sh                # ROS를 켜지 않은 새 터미널에서
-python learning/train_walk_gpu.py --watch     # 3,000만 스텝, 약 20분 (처음 3~4분은 컴파일) + 학습 화면
+python learning/train_walk_gpu.py --watch     # 3,000만 스텝, 약 20~35분 (처음 3~4분은 컴파일) + 학습 화면
 python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보기
 ```
 
@@ -256,12 +258,29 @@ python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # �
 # → output/gait/<실행>_<스텝>/ 에 walk.mp4(영상), walk_slow.mp4(4배 느리게), filmstrip.png(한 걸음 연속 사진),
 #   gait.png(관절 각도 좌우 비교 그래프), 터미널에 좌우 대칭 수치와 '절뚝임 점수'
 python learning/train_walk_gpu.py --init-from <위에서 고른 정책.pkl> \
-    --reward symmetry=-2 --reward step_length=5 --steps 10000000 --name walk_sym --watch   # 이어서 다듬기 (약 12분)
+    --reward heading=-5 --steps 10000000 --name walk_heading --watch   # 예: 방향 유지를 더 강하게 이어서 다듬기 (약 12분)
 ```
 
 절뚝이는 걸음을 이렇게 진단하고 고친 실제 과정 → **[docs/08 §6](docs/08_gpu_walking.md#6-걸음-다듬기--보고-진단하고-보상을-바꿔-이어서-학습)**
 
 과제 설계, 보상 항목, 결과 분석, 보상 바꿔 보기 → **[docs/08 GPU 보행 학습](docs/08_gpu_walking.md)**
+
+### 11단계. (선택) 남이 만든 오픈소스 로봇 불러오기 — 오리 로봇 Open Duck Mini
+
+인터넷에서 받은 URDF를 시뮬레이터에 넣을 때 생기는 문제를 실제 로봇으로 확인하고 고칩니다 (4단계 후, 인터넷 필요).
+
+```bash
+bash scripts/get_open_duck.sh                   # URDF + 메시 + 라이선스 받기 (처음 한 번, 약 19 MB)
+python tutorials/t07_open_duck.py --headless    # 문제 확인 → 보완 → 좌우 관절 부호 → 서 있기 검증
+python tutorials/t07_open_duck.py               # 뷰어: PD로 서 있는 오리 (Ctrl+오른쪽 드래그로 밀어 보기)
+```
+
+✅ 확인: 마지막에 `발 하중 ... = 무게(20.22 N)의 1.000배`, `서 있음 ✅`
+
+![Open Duck Mini](docs/images/open_duck_stand.png)
+
+받은 파일은 고치지 않고, 불러올 때 보완합니다 (메시 경로, 토크 한계, 충돌 형상 단순화 등).
+오픈소스 URDF 점검표와 확인 과정 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
 
 ### 막혔을 때
 
@@ -280,10 +299,11 @@ python learning/train_walk_gpu.py --init-from <위에서 고른 정책.pkl> \
 
 | 문서 | 내용 |
 |---|---|
-| [tutorials/README.md](tutorials/README.md) | MuJoCo 튜토리얼 t01~t06 (순서대로, 과제 포함) |
+| [tutorials/README.md](tutorials/README.md) | MuJoCo 튜토리얼 t01~t07 (순서대로, 과제 포함) |
 | [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md) | ROS2 실행 가이드: 명령별로 무슨 일이 일어나는지 |
 | [docs/07_learning.md](docs/07_learning.md) | 강화학습 첫 예제: 개념, 실행, 결과 해석, CPU vs GPU |
-| [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, TensorBoard |
+| [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기 |
+| [docs/09_open_source_robot.md](docs/09_open_source_robot.md) | 오픈소스 로봇(오리) 불러오기: URDF 점검표, 좌우 부호, 서 있기 |
 | [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
 | [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
 
@@ -309,6 +329,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + ros2_ws + ROS_DOMAIN_ID=27
 │   ├── check_env.py              ← 환경 진단 (Python/numpy/mujoco/ROS2/GL)
 │   ├── build_ros.sh              ← ros2_ws 빌드 (venv의 python -m colcon build — 그냥 colcon build 금지)
+│   ├── get_open_duck.sh          ← [선택, 1회] 오픈소스 오리 로봇 Open Duck Mini 내려받기 (고정 커밋, docs/09)
 │   └── inertia_calc.py           ← box/cylinder/sphere 관성 → URDF <inertia> 한 줄
 │
 ├── docs/                         ── 학습 문서 (번호 순서대로)
@@ -320,16 +341,18 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 05_ros2_bridge_plan.md    ← ROS2 연동 단계별 실행 계획 (사전 검증 결과, 인터페이스 명세, 결정 사항, 진행 상태)
 │   ├── 06_ros2_hands_on.md       ← ROS2 실행 가이드: 명령별로 일어나는 일 + 터미널 실습
 │   ├── 07_learning.md            ← 강화학습 첫 예제: 밀려도 넘어지지 않기 (PPO), TensorBoard
-│   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계
+│   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기
+│   ├── 09_open_source_robot.md   ← 오픈소스 로봇 불러오기: URDF 점검표, Open Duck Mini 실습
 │   └── images/                   ← README의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
 │   ├── mjcf/
 │   │   └── falling_box.xml       ← MJCF Hello World (t01, t02)
-│   └── urdf/
-│       └── pendulum/
-│           └── pendulum.urdf     ← 최소 URDF: 링크 2 + 관절 1 (t03)
-│                                   (2족 로봇 URDF는 ros2_ws/src/giga_description/urdf/ 로 이동)
+│   ├── urdf/
+│   │   └── pendulum/
+│   │       └── pendulum.urdf     ← 최소 URDF: 링크 2 + 관절 1 (t03)
+│   │                               (2족 로봇 URDF는 ros2_ws/src/giga_description/urdf/ 로 이동)
+│   └── third_party/              ← 외부 오픈소스 로봇 (내려받아 채움, git 제외. README.md에 출처·라이선스)
 │
 ├── biped_sim/                    ── 시뮬레이터 코어 (Python 패키지)
 │   ├── __init__.py               ← 공개 API 모음
@@ -337,7 +360,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── builder.py                ← URDF → MuJoCo 모델 (freejoint·모터·IMU·바닥·충돌제외·키프레임)
 │   ├── robot.py                  ← RobotInterface: 관절 '이름' 기반 상태 읽기/토크 쓰기 (ROS2 JointState 대응)
 │   ├── controllers.py            ← JointPDController (τ = Kp·e + Kd·ė + τ_ff, 토크 포화)
-│   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크)
+│   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크): SIMPLE_BIPED, OPEN_DUCK_MINI
 │   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), passive_viewer(안전한 뷰어 종료), 스냅샷, 카메라
 │   ├── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
 │   └── envs/                     ← 강화학습 환경
@@ -351,7 +374,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── t03_urdf_pendulum.py      ← URDF 로드 → 검증 실패 → 진단 → 수정 → 재검증
 │   ├── t04_biped_inspect.py      ← 2족 URDF 해부, 인덱스 표, MJCF 내보내기
 │   ├── t05_biped_hanging_pd.py   ← 매단 로봇 관절 PD 궤적 추종 (게인/피드포워드 비교)
-│   └── t06_biped_stand.py        ← 바닥에 세우기, 접촉력=무게 검증, 밀기 실험
+│   ├── t06_biped_stand.py        ← 바닥에 세우기, 접촉력=무게 검증, 밀기 실험
+│   └── t07_open_duck.py          ← 남이 만든 오픈소스 로봇(오리) 불러오기: 문제 확인 → 보완 → 서 있기
 │
 ├── tests/                        ── 회귀 테스트 (pytest)
 │   ├── test_simulator.py         ← URDF 변환 동작, 빌더, 진자 주기, 서 있기, 접촉력=무게
@@ -359,6 +383,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_ros_sim_node.py      ← sim_node 통합: 주기, 명령, 초기화, IMU·TF, 정상 종료
 │   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
 │   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
+│   ├── test_open_duck.py         ← 오리 로봇: 빌더 보완, 바닥 1 mm 위 시작, 좌우 부호, 서 있기 (파일 있을 때만)
 │   └── test_walk_mjx.py          ← GPU 보행 환경·관측 일치·학습 화면·걸음 분석·미리 학습된 걸음 (.venv-mjx에서만)
 │
 ├── learning/                     ── 강화학습 예제 (CPU: docs/07, GPU 보행: docs/08)

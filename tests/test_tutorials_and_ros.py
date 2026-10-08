@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from biped_sim import paths
+from biped_sim import OPEN_DUCK_MINI, paths
 
 TUTORIALS = paths.REPO_ROOT / "tutorials"
 
@@ -23,7 +23,10 @@ TUTORIALS = paths.REPO_ROOT / "tutorials"
     ("t04_biped_inspect.py", ["--headless"], "MJCF 내보내기"),
     ("t05_biped_hanging_pd.py", ["--headless", "--duration", "2"], "추종 성능"),
     ("t06_biped_stand.py", ["--headless", "--duration", "2"], "서 있음 ✅"),
-], ids=["t01", "t02", "t03", "t04", "t05", "t06"])
+    pytest.param("t07_open_duck.py", ["--headless", "--duration", "2"], "서 있음 ✅",
+                 marks=pytest.mark.skipif(not OPEN_DUCK_MINI.urdf.exists(),
+                                          reason="Open Duck Mini 파일 없음 → bash scripts/get_open_duck.sh")),
+], ids=["t01", "t02", "t03", "t04", "t05", "t06", "t07"])
 def test_tutorial_runs_headless(script, args, must_contain):
     proc = subprocess.run([sys.executable, str(TUTORIALS / script), *args],
                           capture_output=True, text=True, timeout=300, cwd=paths.REPO_ROOT)

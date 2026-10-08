@@ -6,9 +6,9 @@
     python learning/train_walk_gpu.py --watch               # 기본 3,000만 스텝 + 학습 화면(그래프·로봇) 함께
     python learning/train_walk_gpu.py                       # 화면 없이 학습만
     python learning/train_walk_gpu.py --steps 2000000       # 짧게 동작 확인
-    python learning/train_walk_gpu.py --reward heading=-1 --name walk_heading   # 보상 바꿔 실험
+    python learning/train_walk_gpu.py --reward symmetry=0 --name walk_nosym     # 보상 바꿔 실험 (대칭 보상 끄기)
     python learning/train_walk_gpu.py --init-from output/learning/<YYMMDD_HHMMSS>_walk/params.pkl \
-        --reward symmetry=-2 --steps 10000000 --name walk_sym                  # 이전 걸음에서 이어서 다듬기
+        --reward heading=-5 --steps 10000000 --name walk_heading               # 이전 걸음에서 이어서 다듬기
 
 학습 화면 (--watch, = 다른 터미널에서 python learning/play_walk.py --live)
     MuJoCo 창 하나에 학습 그래프와 최신 정책으로 걷는 로봇. Enter 키로 [학습 현황] ↔ [로봇 보기] 전환

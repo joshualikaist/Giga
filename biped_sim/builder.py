@@ -56,6 +56,16 @@ class SimConfig:
     # 모터 회전자 관성 [kg·m²]. 실제 감속기 모터는 (회전자 관성 × 감속비²)만큼 관절이 "무거워" 보임.
     # URDF에는 이 항목이 없으며, 가벼운 링크(발 등)에서 PD 제어를 수치적으로 안정하게 해 줌.
     joint_armature: float = 0.01
+    joint_damping: float | None = None       # 관절 점성 감쇠 [N·m·s/rad]. None = URDF <dynamics> 값 그대로
+    joint_frictionloss: float | None = None  # 관절 건마찰 [N·m]. None = URDF 값 그대로
+    # 모터 토크 한계 덮어쓰기 [N·m]: 숫자 하나(모든 관절) 또는 {관절 이름: 한계}. None = URDF <limit effort>.
+    # 오픈소스 URDF의 effort는 CAD 내보내기 기본값(예: 1)인 경우가 많아 실제 모터 사양으로 바꿔야 함 (docs/09)
+    effort_limits: float | dict[str, float] | None = None
+
+    # URDF의 메시 경로가 package://... 이면 MuJoCo가 파일을 못 찾는다 → 경로를 떼고 파일 이름만 이 폴더에서 찾음
+    mesh_dir: str | Path | None = None
+    # 이 바디들만 충돌 계산 (예: 발). None = 전부. CAD 메시를 그대로 충돌시키면 느리고 부품끼리 가짜 접촉이 생김
+    collision_bodies: tuple[str, ...] | None = None
 
     add_floor: bool = True
     add_imu: bool = True
@@ -72,10 +82,16 @@ def build_robot_spec(urdf_path: str | Path, cfg: SimConfig | None = None) -> muj
     """URDF를 읽어 시뮬레이션 요소가 추가된 MjSpec을 돌려준다 (아직 컴파일 전)."""
     cfg = cfg or SimConfig()
     spec = mujoco.MjSpec.from_file(str(urdf_path))
+    if cfg.mesh_dir is not None:   # package://pkg/meshes/x.stl → x.stl 을 mesh_dir에서 (docs/03 §3)
+        spec.meshdir = str(cfg.mesh_dir)
+        spec.strippath = True
 
     # ① 관절 없는 링크 병합 끄기. 기본값(True)이면 루트 링크(base_link)가 world에 흡수되어
     #    freejoint를 붙일 대상 자체가 사라진다. (URDF의 <mujoco> 태그가 없어도 안전하도록 여기서 강제)
     spec.compiler.fusestatic = False
+    # ①-b 충돌하지 않는 형상(시각용)도 남기기. URDF를 읽을 때 MuJoCo 기본값은 discardvisual=True라서,
+    #    collision_bodies로 충돌을 끈 몸통·다리 형상이 컴파일 때 통째로 사라진다 (Open Duck Mini에서 확인, docs/09)
+    spec.compiler.discardvisual = False
 
     # ② 물리 옵션
     spec.option.timestep = cfg.timestep
@@ -107,6 +123,14 @@ def build_robot_spec(urdf_path: str | Path, cfg: SimConfig | None = None) -> muj
         if joint.type not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
             continue  # freejoint 등은 구동하지 않음
         joint.armature = cfg.joint_armature
+        if cfg.joint_damping is not None:
+            joint.damping = [cfg.joint_damping, 0.0, 0.0]   # MuJoCo 3.15: [선형 감쇠, 비선형 항 2개]
+        if cfg.joint_frictionloss is not None:
+            joint.frictionloss = cfg.joint_frictionloss
+        if cfg.effort_limits is not None:
+            limit = (cfg.effort_limits[joint.name] if isinstance(cfg.effort_limits, dict)
+                     else float(cfg.effort_limits))
+            joint.actfrcrange = [-limit, limit]
         lo, hi = joint.actfrcrange
         if not hi > lo:
             raise ValueError(f"관절 '{joint.name}'에 토크 한계가 없습니다. URDF <limit effort=...>를 지정하세요.")
@@ -125,6 +149,12 @@ def build_robot_spec(urdf_path: str | Path, cfg: SimConfig | None = None) -> muj
             if g.contype != 0 or g.conaffinity != 0:
                 g.group = COLLISION_GROUP
                 g.rgba = [0.9, 0.6, 0.1, 0.4]  # 켜서 볼 때 반투명 주황색
+    # ⑤-b 지정한 바디만 충돌 (나머지는 보이기만 함)
+    if cfg.collision_bodies is not None:
+        for g in geoms:
+            if g.parent.name not in cfg.collision_bodies:
+                g.contype = 0
+                g.conaffinity = 0
 
     # ⑥ IMU: 몸통 원점에 site(=좌표계 표식)를 달고, 그 site를 기준으로 센서를 정의
     if cfg.add_imu:

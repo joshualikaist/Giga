@@ -40,7 +40,8 @@ def lowest_collision_z(model: mujoco.MjModel, data: mujoco.MjData) -> float:
 
     로봇을 바닥 "바로 위"에 올려놓을 때 사용합니다 (mj_forward 이후 호출해야 함).
     - world에 붙은 geom(바닥 등)과 시각용 geom(contype=conaffinity=0)은 제외
-    - box/sphere/capsule/cylinder는 정확히 계산, 그 외(mesh 등)는 경계구(rbound)로 보수적 근사
+    - box/sphere/capsule/cylinder/mesh는 정확히 계산, 그 외는 경계구(rbound)로 보수적 근사
+      (mesh를 경계구로 근사하면 CAD 발은 수 cm 떠서 시작해 떨어진다 — Open Duck Mini에서 5 cm, docs/09)
     """
     z_min = np.inf
     for g in range(model.ngeom):
@@ -64,6 +65,11 @@ def lowest_collision_z(model: mujoco.MjModel, data: mujoco.MjData) -> float:
             z = pos[2] - abs(axis_z) * size[1] - size[0]
         elif gtype == mujoco.mjtGeom.mjGEOM_CYLINDER:
             z = pos[2] - abs(axis_z) * size[1] - size[0] * np.sqrt(max(0.0, 1.0 - axis_z**2))
+        elif gtype == mujoco.mjtGeom.mjGEOM_MESH:
+            # 메시 꼭짓점은 geom 좌표계 기준으로 저장됨 → world로 옮겨 가장 낮은 점
+            mesh = model.geom_dataid[g]
+            adr, num = model.mesh_vertadr[mesh], model.mesh_vertnum[mesh]
+            z = (pos[2] + model.mesh_vert[adr:adr + num] @ rot[2]).min()
         else:
             z = pos[2] - model.geom_rbound[g]
         z_min = min(z_min, z)

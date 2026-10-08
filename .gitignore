@@ -5,6 +5,10 @@
 # 시뮬레이션 생성물 (내보낸 MJCF, 그래프, 스냅샷)
 output/
 
+# 외부 로봇 모델 (scripts/get_open_duck.sh 등으로 내려받음). 설명 파일만 저장소에 둔다
+models/third_party/*
+!models/third_party/README.md
+
 # Python 캐시 / 빌드 산출물
 __pycache__/
 *.py[cod]

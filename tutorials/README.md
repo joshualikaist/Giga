@@ -1,4 +1,4 @@
-# 튜토리얼 (t01 ~ t06)
+# 튜토리얼 (t01 ~ t07)
 
 **순서대로** 진행하세요. 각 튜토리얼은 `--headless`(숫자 출력)와 뷰어 모드를 모두 지원합니다.
 먼저 `--headless`로 결과를 읽고, 그다음 뷰어로 눈으로 확인하는 것을 권장합니다.
@@ -16,6 +16,7 @@ python tutorials/t01_hello_mujoco.py --headless
 | t04 | `t04_biped_inspect.py` | 2족 URDF 해부 | 빌더는 무엇을 추가하나? | [03](../docs/03_urdf_and_mujoco.md) §3, [04](../docs/04_simple_biped_spec.md) |
 | t05 | `t05_biped_hanging_pd.py` | **매단 로봇 관절 PD 추종** | Kp/Kd/피드포워드의 효과는? | [02](../docs/02_mujoco_concepts.md) §8 |
 | t06 | `t06_biped_stand.py` | 바닥에 세우기 | 시뮬레이션이 물리적으로 맞나? 어디까지 버티나? | [04](../docs/04_simple_biped_spec.md) §5 |
+| t07 | `t07_open_duck.py` | 남이 만든 로봇(오리) 불러오기 | 받은 URDF를 그대로 넣으면 무엇이 틀어지나? | [09](../docs/09_open_source_robot.md) |
 
 결과물(그래프, 이미지, 내보낸 MJCF)은 모두 `output/`에 저장됩니다.
 
@@ -110,3 +111,24 @@ python tutorials/t06_biped_stand.py                          # 뷰어에서 직�
 1. `robot_configs.py`에서 발목 Kp를 30으로 낮추면 `--push 20`의 결과는? ([04](../docs/04_simple_biped_spec.md) §5 표와 비교)
 2. 옆으로(y 방향) 밀면 어떻게 될까요? `control_step`의 힘 방향을 바꿔 실험하고, hip roll이 없는 이 로봇의 한계를 설명하세요.
 3. home 자세의 `_A`(무릎 굽힘 정도)를 0.2, 0.6으로 바꾸면 버틸 수 있는 밀기 힘이 어떻게 변하나요? 이유는?
+
+## t07 — 남이 만든 오픈소스 로봇 불러오기 (Open Duck Mini v2)
+
+```bash
+bash scripts/get_open_duck.sh                   # 처음 한 번 (약 19 MB)
+python tutorials/t07_open_duck.py --headless
+python tutorials/t07_open_duck.py               # 뷰어: 서 있는 오리를 Ctrl+오른쪽 드래그로 밀어 보기
+python tutorials/t07_open_duck.py --hang        # 공중에 매단 오리
+```
+
+관찰 포인트
+- 1번: 받은 URDF를 그대로 열면 메시 경로 오류 → 메시 폴더를 알려 줘도 몸통 고정·모터 없음·가짜 접촉 154개·토크 한계 1 N·m
+- 2번: `RobotConfig.sim_defaults`의 각 줄이 1번의 어떤 문제를 고치는지 짝지어 보기
+- 3번: 같은 이름의 관절인데 hip_pitch만 좌우 부호가 반대. 관절 이름만 보고 짐작하면 왜 위험한가?
+- 4번: 두 발 하중의 합이 무게와 같은지 (t06과 같은 검증)
+
+과제
+1. `biped_sim/robot_configs.py`에서 `OPEN_DUCK_MINI`의 `collision_bodies`를 지우고 실행해 보세요. 접촉 수와 실행 속도가 어떻게 바뀌나요?
+2. `kp`를 5로 낮추면 몸통이 얼마나 기우나요? (docs/09 §5의 표와 비교)
+3. home 자세의 무릎을 앞으로 굽히도록(knee −0.8, 왼쪽 hip +0.4 ...) 바꾸면 서 있을 수 있나요? 걸을 때는 어떤 문제가 생길까요? (docs/09 §4)
+

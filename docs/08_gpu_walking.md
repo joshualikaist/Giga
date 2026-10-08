@@ -10,7 +10,7 @@ bash scripts/setup_gpu_learning.sh
 
 # GPU 학습 + 학습 화면 (ROS를 켜지 않은 새 터미널 권장)
 source scripts/activate_gpu.sh
-python learning/train_walk_gpu.py --watch         # 3,000만 스텝, 약 20분. MuJoCo 창이 함께 열림
+python learning/train_walk_gpu.py --watch         # 3,000만 스텝, 약 20~35분. MuJoCo 창이 함께 열림
 
 # (선택) TensorBoard로 더 자세한 그래프 — 다른 터미널
 source scripts/activate.sh
@@ -21,7 +21,7 @@ python learning/play_walk.py --view               # MuJoCo 화면 (Enter로 학�
 python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # 영상·연속 사진·그래프·절뚝임 점수 (§6)
 
 # 걸음 다듬기: 가장 좋은 정책에서 보상을 바꿔 이어서 학습 (§6)
-python learning/train_walk_gpu.py --init-from <정책.pkl> --reward symmetry=-2 --steps 10000000 --watch
+python learning/train_walk_gpu.py --init-from <정책.pkl> --reward heading=-5 --steps 10000000 --watch   # 예: 방향 유지 더 강하게
 
 # GPU 학습 없이 다듬어 둔 걸음 바로 보기
 python learning/play_walk.py --view --params learning/pretrained/walk_policy.pkl
@@ -112,15 +112,18 @@ JAX/Brax는 약 65개 패키지를 끌어오고, PyTorch와 같은 NVIDIA 라이
 | `alive` | +0.5 | 1 | 넘어지지 않기 |
 | `flight` | −1.0 | 두 발 모두 공중이면 1 | 뛰지 말고 걷기 (§5.1에서 추가하게 된 이유) |
 | `gait_phase` | +1.0 | 걸음 박자(0.8 s)의 앞 절반은 왼발만, 뒤 절반은 오른발만, 전환 구간은 양발로 딛으면 1 | 좌우 번갈아 걷기 |
-| `heading` | 0 (꺼짐) | (방향 각도)² | 처음 방향 유지 — §6 |
-| `symmetry` | 0 (꺼짐) | Σ(왼다리 관절 각도 − 반 박자 전 오른다리 관절 각도)² + 반대 [rad²] | 두 다리가 같은 동작을 반 박자 어긋나게 (절뚝임 방지) — §6 |
-| `step_length` | 0 (꺼짐) | 한 걸음 착지 때 (반대 발보다 앞에 놓은 거리 / 목표 보폭 0.12 m), 최대 1. 0.1초 이상 공중에 있던 착지만 | 두 발 모두 앞으로 내딛기 — §6 |
+| `heading` | −3.0 | (방향 각도)² | 처음 방향 유지 (§6) |
+| `symmetry` | −2.0 | Σ(왼다리 관절 각도 − 반 박자 전 오른다리 관절 각도)² + 반대 [rad²] | 두 다리가 같은 동작을 반 박자 어긋나게 (절뚝임 방지, §6) |
+| `step_length` | +5.0 | 한 걸음 착지 때 (반대 발보다 앞에 놓은 거리 / 목표 보폭 0.12 m), 최대 1. 0.1초 이상 공중에 있던 착지만 | 두 발 모두 앞으로 내딛기 (§6) |
+
+아래 세 항목(`heading`, `symmetry`, `step_length`)은 §6에서 절뚝이는 걸음을 고치며 더한 것입니다.
+§5의 학습들은 이 항목들이 없을 때(0) 한 것입니다.
 
 가중치는 코드를 고치지 않고 학습 명령에서 바꿀 수 있습니다:
 
 ```bash
-python learning/train_walk_gpu.py --reward heading=-1 --name walk_heading            # 방향 유지 보상 켜기
-python learning/train_walk_gpu.py --reward gait_phase=0 --reward flight=0 --name walk_v1   # §5.1 재현 (뛰는 걸음)
+python learning/train_walk_gpu.py --reward heading=0 --name walk_noheading           # 방향 유지 보상 끄기
+python learning/train_walk_gpu.py --reward symmetry=0 --reward step_length=0 --reward heading=0 --name walk_v2   # §5.2 재현 (절뚝임)
 ```
 
 가중치가 0인 항목은 보상 그래프(`eval/episode_reward/<항목>`)에서도 0으로 나옵니다.
@@ -138,19 +141,22 @@ python learning/train_walk_gpu.py --reward gait_phase=0 --reward flight=0 --name
 
 ## 4. 학습 중 화면 출력과 TensorBoard
 
-학습 출력 (실측, 기본 설정 일부):
+학습 출력 (실측, 현재 기본 설정 = §6.6 학습의 일부):
 
 ```
 처음 1~3분은 GPU용 코드 컴파일(JIT) 시간이라 출력이 없습니다.
-  스텝           0 / 30,000,000 | 평균 보상   -2.38 | 버틴 시간  1.03 s / 10 s | 앞으로 속도 +0.06 m/s | 두 발 공중  62% | 경과   112 s
-  스텝   1,064,960 / 30,000,000 | 평균 보상    1.20 | 버틴 시간  1.10 s / 10 s | 앞으로 속도 +0.25 m/s | 두 발 공중  37% | 경과   249 s
-  스텝   2,129,920 / 30,000,000 | 평균 보상   21.21 | 버틴 시간  9.79 s / 10 s | 앞으로 속도 +0.27 m/s | 두 발 공중  17% | 경과   292 s
-  스텝   3,194,880 / 30,000,000 | 평균 보상   27.71 | 버틴 시간 10.00 s / 10 s | 앞으로 속도 +0.27 m/s | 두 발 공중   4% | 경과   342 s
-  스텝   5,324,800 / 30,000,000 | 평균 보상   32.24 | 버틴 시간 10.00 s / 10 s | 앞으로 속도 +0.30 m/s | 두 발 공중   0% | 경과   431 s
+  스텝           0 / 30,000,000 | 평균 보상   -3.11 | 버틴 시간  1.03 s / 10 s | 앞으로 속도 +0.06 m/s | 두 발 공중  62% | 좌우 다리 차이  9.4° | 경과   109 s
+  스텝   1,064,960 / 30,000,000 | 평균 보상    0.58 | 버틴 시간  0.75 s / 10 s | 앞으로 속도 +0.29 m/s | 두 발 공중  35% | 좌우 다리 차이  8.0° | 경과   259 s
+  스텝   2,129,920 / 30,000,000 | 평균 보상   11.59 | 버틴 시간  8.45 s / 10 s | 앞으로 속도 +0.24 m/s | 두 발 공중  16% | 좌우 다리 차이  8.0° | 경과   328 s
+  스텝   4,259,840 / 30,000,000 | 평균 보상   27.90 | 버틴 시간 10.00 s / 10 s | 앞으로 속도 +0.30 m/s | 두 발 공중   2% | 좌우 다리 차이  6.8° | 경과   474 s
+  스텝   6,389,760 / 30,000,000 | 평균 보상   32.96 | 버틴 시간 10.00 s / 10 s | 앞으로 속도 +0.30 m/s | 두 발 공중   0% | 좌우 다리 차이  4.6° | 경과   606 s
+  스텝  31,948,800 / 30,000,000 | 평균 보상   36.43 | 버틴 시간 10.00 s / 10 s | 앞으로 속도 +0.30 m/s | 두 발 공중   0% | 좌우 다리 차이  2.4° | 경과  2036 s
 ```
 
-`두 발 공중`은 평가 에피소드에서 두 발이 모두 땅에서 떨어져 있던 시간 비율입니다. 0 %에 가까우면 뛰지 않고 걷는 것입니다.
-같은 설정·같은 `--seed`로 다시 학습하면 같은 숫자가 나옵니다 (실측: 이 출력과 §5.2 v2 학습의 평균 보상이 소수점까지 같음).
+- `두 발 공중`: 평가 에피소드에서 두 발이 모두 땅에서 떨어져 있던 시간 비율. 0 %에 가까우면 뛰지 않고 걷는 것
+- `좌우 다리 차이`: 왼다리 관절 각도와 반 박자 전 오른다리 관절 각도의 차이(RMS). 작을수록 두 다리가 같은 동작 = 절뚝이지 않음
+- 같은 설정·같은 `--seed`로 다시 학습하면 같은 숫자가 나옵니다 (실측: §5.2와 그 재실행의 평균 보상이 소수점까지 같음).
+  다만 학습 시간은 같은 PC에서 함께 돌리는 작업에 따라 달라집니다 (위 실행은 다른 작업과 동시에 해 34분)
 
 TensorBoard (`tensorboard --logdir output/learning` → http://localhost:6006):
 
@@ -173,9 +179,10 @@ CPU 학습(docs/07)과 같은 `output/learning` 폴더에 쌓이므로 TensorBoa
 
 ## 5. 결과 (이 PC 실측)
 
-### 5.1 걸음 박자 보상 없이 (v1): `--reward gait_phase=0 --reward flight=0`
+### 5.1 걸음 박자 보상 없이 (v1)
 
-처음에는 `flight`, `gait_phase` 없이 (둘 다 0) 학습했습니다.
+처음에는 `flight`, `gait_phase`도 없이 학습했습니다 (그리고 §6의 세 항목도 없음).
+재현: `--reward gait_phase=0 --reward flight=0 --reward symmetry=0 --reward step_length=0 --reward heading=0`
 
 3,000만 스텝에 **1,291초(약 21분)** 걸렸습니다.
 처음 약 3.5분은 컴파일 시간이고, 그 뒤로는 100만 스텝당 약 36초입니다.
@@ -209,7 +216,7 @@ Brax는 평가 구간 단위로 반올림하므로 실제로는 3,195만 스텝�
   GPU에서 배운 정책이 ROS2 sim_node가 쓰는 시뮬레이터에서도 그대로 걷는다는 뜻입니다.
   옆으로 흐름·방향의 작은 차이는 두 시뮬레이터의 미세한 수치 차이가 10초 동안 쌓인 것입니다.
 
-### 5.2 걸음 박자 보상 추가 (v2 = 현재 기본값): `python learning/train_walk_gpu.py`
+### 5.2 걸음 박자 보상 추가 (v2): `--reward symmetry=0 --reward step_length=0 --reward heading=0`
 
 `gait_phase` +1.0(박자대로 좌우 번갈아 딛기)과 `flight` −1.0(두 발 모두 공중이면 벌점)을 더했습니다. 학습 시간은 1,288초로 v1과 같습니다.
 
@@ -309,7 +316,7 @@ python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk      
 
 ```bash
 python learning/train_walk_gpu.py --init-from output/learning/261008_110341_walk/params.pkl \
-    --reward symmetry=-2 --reward step_length=5 --steps 10000000 --evals 11 --name walk_sym --watch
+    --reward symmetry=-2 --reward step_length=5 --reward heading=0 --steps 10000000 --evals 11 --name walk_sym --watch
 ```
 
 학습 출력의 `좌우 다리 차이`(반 박자 어긋나게 비교한 관절 각도 차이)는 18.5° → 9.5°(100만 스텝) → 4.1°로 줄었습니다.
@@ -358,17 +365,17 @@ python learning/train_walk_gpu.py --init-from output/learning/261008_113545_walk
 
 ### 6.5 정리
 
-| | 5.2 (절뚝임) | 6.3 1차 | **6.4 2차 (최종)** |
-|---|---|---|---|
-| 걸음 길이 왼쪽 / 오른쪽 | −3.5 / 27.0 cm | 12.3 / 11.6 cm | **13.0 / 12.7 cm** |
-| 좌우 다리 차이 | 19.5° | 3.2° | **1.7°** |
-| **절뚝임 점수** | 40.6 % | 4.1 % | **2.1 %** |
-| 발 튕김 (8초) | 0 | 24 | **0** |
-| 방향 / 옆으로 흐름 (10초) | −3° / −0.17 m | −18° / −0.61 m | **−1° / −0.02 m** |
-| 속도, 두 발 공중 | 0.30 m/s, 0 % | 0.31 m/s, 0 % | 0.30 m/s, 0 % |
-| 학습 시간 | 22분 (처음부터) | +12분 | +14분 |
+| | 5.2 (절뚝임) | 6.3 1차 | 6.4 2차 | **6.6 처음부터 (현재 기본값)** |
+|---|---|---|---|---|
+| 걸음 길이 왼쪽 / 오른쪽 | −3.5 / 27.0 cm | 12.3 / 11.6 cm | 13.0 / 12.7 cm | **11.5 / 12.4 cm** |
+| 좌우 다리 차이 | 19.5° | 3.2° | 1.7° | **0.8°** |
+| **절뚝임 점수** | 40.6 % | 4.1 % | 2.1 % | **1.8 %** |
+| 발 튕김 (8초) | 0 | 24 | 0 | **0** |
+| 방향 / 옆으로 흐름 (10초) | −3° / −0.17 m | −18° / −0.61 m | −1° / −0.02 m | **+3° / +0.02 m** |
+| 속도, 두 발 공중 | 0.30 m/s, 0 % | 0.31 m/s, 0 % | 0.30 m/s, 0 % | 0.30 m/s, 0 % |
+| 학습 시간 | 22분 (처음부터) | +12분 | +14분 | 34분 (처음부터, 다른 작업과 동시에) |
 
-최종 정책은 `learning/pretrained/walk_policy.pkl`에 넣어 두었습니다. GPU 학습 없이 바로 볼 수 있습니다:
+6.4의 정책은 `learning/pretrained/walk_policy.pkl`에 넣어 두었습니다. GPU 학습 없이 바로 볼 수 있습니다:
 
 ```bash
 python learning/play_walk.py --view --params learning/pretrained/walk_policy.pkl
@@ -382,9 +389,27 @@ python learning/analyze_gait.py --params learning/pretrained/walk_policy.pkl
 - **이어서 학습하면 빠릅니다.** 이미 배운 것은 유지되고, 바뀐 부분만 배웁니다.
 - 보상 식이 바뀌면 '평균 보상' 숫자는 이전 학습과 비교할 수 없습니다. 비교는 `analyze_gait.py`의 걸음 수치로 합니다.
 
+### 6.6 처음부터 새 보상으로 학습 → 현재 기본값
+
+다듬으며 찾은 보상(`symmetry` −2, `step_length` +5, `heading` −3)을 켜고 **처음부터** 3,000만 스텝 학습했습니다.
+
+```bash
+python learning/train_walk_gpu.py --reward symmetry=-2 --reward step_length=5 --reward heading=-3 --name walk_scratch --watch
+```
+
+`analyze_gait.py --run`으로 31개 체크포인트를 비교하면, 640만 스텝부터 발 튕김이 거의 없고(0~1회)
+절뚝임 점수가 3~8 %로 내려갑니다. 가장 좋은 2,769만 스텝 정책은 절뚝임 1.8 %, 좌우 다리 차이 0.8°로
+두 번 다듬은 6.4보다도 대칭입니다 (6.5 표). **처음부터 이 보상들로 학습해도 절뚝이지 않으므로 기본값으로 바꿨습니다.**
+이제 `python learning/train_walk_gpu.py`만 실행해도 이 걸음을 배웁니다.
+
+이어서 학습(6.3~6.4)과 처음부터 학습(6.6)의 쓰임새:
+- **이어서 학습**: 이미 있는 걸음을 조금 고칠 때. 빠르고(12분), 이미 배운 것이 유지됨. 한 번에 한 가지 문제를 고치기 좋음
+- **처음부터 학습**: 보상 설계가 정해졌을 때 최종 확인. 이전 걸음의 버릇(예: 한쪽 다리가 앞)에 끌려가지 않음
+
 직접 해 볼 것:
-- 이 보상들(`symmetry`, `step_length`, `heading`)을 켜고 **처음부터** 학습하면 절뚝이지 않는 걸음이 바로 나오는지
 - `--speed 0.5`로 이어서 학습해 더 빠른 걸음으로 다듬기 (목표 보폭은 속도에 맞춰 자동으로 바뀜)
+- 박자 `GAIT_PERIOD`(walk_mjx.py)를 0.6이나 1.0으로 바꾸면 보폭과 걸음 방식이 어떻게 바뀌는지
+- 한 항목씩 꺼 보기 (예: `--reward symmetry=0`): 각 보상이 걸음의 무엇을 책임지는지
 
 ## 7. 문제 해결
 

@@ -131,3 +131,4 @@ KDL(ROS의 기구학 라이브러리)이 루트 링크의 관성을 무시한다
 - [ ] 충돌 형상: 발바닥은 box, 나머지는 단순 도형 권장 (메쉬 충돌은 느리고 접촉이 불안정)
 - [ ] fixed base로 매달아 `ncon == 0`인가 (자기 충돌/가짜 접촉 없음, `test_fixed_base_has_no_spurious_self_contacts` 참고)
 - [ ] 바닥에 세워 정지 시 Σ접촉력 = m·g 인가 (t06)
+- [ ] 남이 만든 오픈소스 URDF라면: 라이선스, 버전 고정, 토크 한계(effort) 실제 값인지, 좌우 관절 부호 → [docs/09 점검표](09_open_source_robot.md) (t07)

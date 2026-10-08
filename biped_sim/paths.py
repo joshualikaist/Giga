@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = REPO_ROOT / "models"
 MJCF_DIR = MODELS_DIR / "mjcf"
 URDF_DIR = MODELS_DIR / "urdf"
+THIRD_PARTY_DIR = MODELS_DIR / "third_party"   # 외부 오픈소스 로봇 (내려받기 스크립트로 채움, git 제외)
 OUTPUT_DIR = REPO_ROOT / "output"  # 생성물(내보낸 MJCF, 그래프, 스냅샷). git에서 제외됨
 
 # 로봇 "설명" ROS2 패키지. 실제 로봇 URDF의 단일 원본은 여기에 둔다 (ROS2·RViz·MuJoCo 공용).
