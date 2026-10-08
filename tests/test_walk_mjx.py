@@ -95,6 +95,29 @@ def test_open_duck_walk_env():
     _cpu_runner_matches_mjx(duck)
 
 
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_feasibility_estimates_for_open_duck():
+    """동역학 한계 계산(learning/feasibility.py, docs/09 §8): 2026-10-08 실측값이 그대로 나오는지와 물리적으로 맞는 관계."""
+    import feasibility as F
+    from walk_tools import MujocoRunner
+
+    runner = MujocoRunner("open_duck_mini")
+    p = F.predictions(runner, {"duty": 0.7, "single_support_s": 0.15, "clearance_m": 0.02})
+    t = p["static_torque_Nm"]
+    assert abs(t["hip_yaw"]) < 1e-6                       # 연직 축 → 중력 토크 없음
+    assert abs(t["hip_roll"]) == pytest.approx(0.90, abs=0.02) and abs(t["knee"]) == pytest.approx(0.74, abs=0.02)
+    assert p["slope"]["slip_deg"] == pytest.approx(45.0)  # μ = 1
+    assert p["slope"]["tip_rigid_uphill_deg"] < p["slope"]["tip_upright_deg"]
+    lift = p["fold_lift"]["swing_s"]
+    assert lift["0.15"][1] < lift["0.25"][1] <= p["step_up_max_m"] + 0.01   # 흔듦이 길수록 높이, 관절 범위가 상한
+    w, (s1, s2) = p["stance_width_m"], p["lipm"]["sway_m"]
+    assert 0 < s1 < s2 < w / 2                            # 무게중심은 디딤 발까지 가지 않음
+    assert F.available_torque(np.array([1.0, 1.0]), np.array([0.0, F.SERVO["noload"]]), "datasheet") == \
+        pytest.approx([F.SERVO["stall"], 0.0])
+    assert F.available_torque(np.array([1.0]), np.array([-3.0]), "datasheet")[0] == F.SERVO["stall"]   # 브레이크 방향
+
+
 def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     """학습 화면(learning/live_dashboard.py): TensorBoard 기록을 직접 읽고, 두 화면 모드에서 그래프·글자를 만든다."""
     import mujoco

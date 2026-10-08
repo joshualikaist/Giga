@@ -105,6 +105,7 @@ class MujocoRunner:
         self.data = mujoco.MjData(self.model)
         self.target_speed = self.spec.target_speed if target_speed is None else target_speed
         self.n_substeps = round(walk_mjx.CONTROL_DT / walk_mjx.PHYSICS_DT)
+        self.on_substep = None   # 물리 스텝마다 부를 함수 f(data) (feasibility.py가 토크 최댓값을 놓치지 않게)
 
     def reset(self) -> np.ndarray:
         mujoco.mj_resetData(self.model, self.data)
@@ -124,6 +125,8 @@ class MujocoRunner:
             q, dq = d.qpos[i["act_qpos_idx"]], d.qvel[i["act_qvel_idx"]]
             d.ctrl[:] = np.clip(i["kp"] * (q_des - q) - i["kd"] * dq, i["tau_limit"][:, 0], i["tau_limit"][:, 1])
             mujoco.mj_step(self.model, d)
+            if self.on_substep:
+                self.on_substep(d)
         self.t += walk_mjx.CONTROL_DT
         self.last_action = action
         return self.obs()

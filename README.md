@@ -166,8 +166,8 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 17 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(7개, 그 환경에서
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 18 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(8개, 그 환경에서
 `pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
@@ -302,6 +302,12 @@ python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --init-
 
 평지에서만 배운 오리는 험한 지형에서 10번 중 2~4번만 버텼고, 지형에서 더 배운 오리는 10번 모두 버텼습니다 (docs/09 §7).
 
+동역학적으로 어디까지 가능한지 계산으로 예상하고, 학습한 걸음이 실제로 쓰는 토크·속도·마찰과 비교:
+
+```bash
+python learning/feasibility.py --params <오리 정책.pkl>      # 한 발 토크, 턱 높이, 경사, 최고 속도, 좌우 흔들림 + 서보 한계선 그래프
+```
+
 오픈소스 URDF 점검표, 확인 과정, 두 학습 방식 비교, 지형 실험 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
 
 ### 막혔을 때
@@ -420,6 +426,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── live_dashboard.py         ← MuJoCo 창 안의 학습 그래프·발 접촉 그래프 (Enter로 화면 전환)
 │   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
 │   ├── terrain_trial.py          ← 울퉁불퉁한 지형 실험: MuJoCo 화면에서 에피소드마다 새 지형 (--headless는 통계)
+│   ├── feasibility.py            ← 동역학 한계 계산(토크·턱·경사·속도·흔들림)과 학습한 걸음의 측정 비교 (docs/09 §8)
 │   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),
 │                                    walk_policy.pkl/.json (다듬은 걸음, docs/08 §6)
 │
