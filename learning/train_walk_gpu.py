@@ -5,6 +5,7 @@
     source scripts/activate_gpu.sh
     python learning/train_walk_gpu.py --watch               # 기본 3,000만 스텝 + 학습 화면(그래프·로봇) 함께
     python learning/train_walk_gpu.py --robot open_duck_mini --watch   # 오리 로봇 (bash scripts/get_open_duck.sh 먼저)
+    python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --init-from <평지 정책.pkl>  # 울퉁불퉁한 지형
     python learning/train_walk_gpu.py                       # 화면 없이 학습만
     python learning/train_walk_gpu.py --steps 2000000       # 짧게 동작 확인
     python learning/train_walk_gpu.py --reward symmetry=0 --name walk_nosym     # 보상 바꿔 실험 (대칭 보상 끄기)
@@ -63,6 +64,9 @@ def main():
                         help="실험 이름 (기본: walk, 오리는 duck_walk). 결과 폴더 = <YYMMDD_HHMMSS>_<이름> "
                              "(날짜가 앞이라 TensorBoard Runs가 시간순)")
     parser.add_argument("--output-dir", type=Path, default=RUNS_DIR)
+    parser.add_argument("--terrain", choices=["flat", "rough"], default="flat",
+                        help="rough: 12 × 12 m 울퉁불퉁한 지형(언덕·경사로·장애물)의 무작위 위치에서 출발 (biped_sim/terrain.py)")
+    parser.add_argument("--terrain-seed", type=int, default=0, help="rough 지형을 만드는 난수 시드")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
                         help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
                              "예: output/learning/<YYMMDD_HHMMSS>_walk/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
@@ -113,12 +117,15 @@ def main():
         "target_speed": speed, "steps": args.steps, "envs": args.envs, "seed": args.seed,
         "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT, "gait_period": spec.gait_period,
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
+        "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
+                                                        "resolution": 0.08},
         "policy_hidden": [128, 128, 128], "value_hidden": [256, 256, 256],
     }
     (run_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False))
 
     print("=" * 76)
-    print(f"과제: {args.robot} 로봇이 앞으로 {speed} m/s로 걷기 (넘어지면 끝, 에피소드 최대 10 s)")
+    print(f"과제: {args.robot} 로봇이 앞으로 {speed} m/s로 걷기 (넘어지면 끝, 에피소드 최대 10 s)"
+          + (" — 울퉁불퉁한 지형 12 × 12 m, 무작위 출발 위치" if args.terrain == "rough" else ""))
     print(f"학습: Brax PPO, {args.steps:,} 스텝, GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
     print(f"보상 가중치: {config['reward_weights']}")
     if args.init_from:
@@ -135,7 +142,14 @@ def main():
         subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("play_walk.py")), "--live",
                           "--params", str(run_dir / "params.pkl")], stdout=watch_log, stderr=subprocess.STDOUT)
 
-    env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides)
+    terrain, spawn_area = None, None
+    if args.terrain == "rough":   # 넓은 지형의 무작위 위치에서 출발. 앞으로 2.5 m는 지형 안이도록
+        from biped_sim.terrain import make_training_terrain
+        # 격자 8 cm: 4 cm보다 GPU에서 2배 빠름 (발 상자가 검사할 칸이 25 → 9개, 실측 7,800 대 3,850 스텝/s)
+        terrain = make_training_terrain(seed=args.terrain_seed, half_size=6.0, resolution=0.08)
+        spawn_area = ((-5.5, 3.5), (-5.5, 5.5))
+    env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
+                                   spawn_area=spawn_area)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()

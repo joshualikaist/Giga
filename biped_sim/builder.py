@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -72,6 +73,8 @@ class SimConfig:
     collision_boxes: dict[str, str] | None = None
 
     add_floor: bool = True
+    # 평평한 바닥 대신 높이맵 지형 (biped_sim.terrain.make_terrain). 출발 자리(원점)가 높이 0이어야 home이 맞음
+    terrain: Any = None
     add_imu: bool = True
     hide_collision_geoms: bool = True  # visual geom이 있을 때 충돌 geom을 그룹 3으로 숨김
     exclude_parent_child_contacts: bool = True  # 관절로 이어진 두 링크끼리는 충돌 검사 안 함
@@ -172,7 +175,7 @@ def build_robot_spec(urdf_path: str | Path, cfg: SimConfig | None = None) -> muj
 
     # ⑦ 환경: 바닥, 조명, 하늘
     if cfg.add_floor:
-        _add_environment(spec)
+        _add_environment(spec, cfg.terrain)
 
     # ⑧ home 키프레임 (뷰어의 "Key" 버튼 또는 mj_resetDataKeyframe으로 불러올 수 있음)
     if cfg.home_joint_pos:
@@ -199,7 +202,7 @@ def export_mjcf(spec: mujoco.MjSpec, path: str | Path) -> Path:
 # ---------------------------------------------------------------------------
 # 내부 함수
 # ---------------------------------------------------------------------------
-def _add_environment(spec: mujoco.MjSpec) -> None:
+def _add_environment(spec: mujoco.MjSpec, terrain=None) -> None:
     spec.add_texture(name="grid", type=mujoco.mjtTexture.mjTEXTURE_2D,
                      builtin=mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
                      rgb1=[0.2, 0.3, 0.4], rgb2=[0.1, 0.15, 0.2], width=512, height=512)
@@ -210,9 +213,17 @@ def _add_environment(spec: mujoco.MjSpec) -> None:
     floor_mat = spec.add_material(name="grid", texrepeat=[2, 2], texuniform=True, reflectance=0.1)
     floor_mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "grid"
 
-    # size 앞 두 값이 0이면 "무한 평면"으로 그림. 충돌은 크기와 무관하게 항상 무한 평면.
-    spec.worldbody.add_geom(name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE,
-                            size=[0, 0, 0.05], material="grid")
+    if terrain is None:
+        # size 앞 두 값이 0이면 "무한 평면"으로 그림. 충돌은 크기와 무관하게 항상 무한 평면.
+        spec.worldbody.add_geom(name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE,
+                                size=[0, 0, 0.05], material="grid")
+    else:
+        # 높이맵: size = (x 반길이, y 반길이, 높이 범위, 바닥 두께). 데이터는 0~1 → 높이 = z + 데이터 × 높이 범위
+        hfield = spec.add_hfield(name="terrain", nrow=terrain.nrow, ncol=terrain.ncol,
+                                 size=[terrain.size_x, terrain.size_y, terrain.z_range, 0.05])
+        hfield.userdata = terrain.hfield_data().tolist()
+        spec.worldbody.add_geom(name="floor", type=mujoco.mjtGeom.mjGEOM_HFIELD, hfieldname="terrain",
+                                pos=[terrain.center[0], terrain.center[1], terrain.z_low], material="grid")
     spec.worldbody.add_light(name="sun", pos=[0, 0, 3], dir=[0, 0, -1],
                              type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
                              diffuse=[0.6, 0.6, 0.6], castshadow=True)

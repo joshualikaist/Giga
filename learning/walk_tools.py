@@ -91,10 +91,13 @@ class MujocoRunner:
     """일반 MuJoCo(C)로 학습 환경과 똑같은 규칙(관측·PD·제어 주기)을 재현. ROS2 sim_node와 같은 시뮬레이터.
     관측 계산이 학습 환경(walk_mjx._observation)과 같은지는 tests/test_walk_mjx.py가 확인한다."""
 
-    def __init__(self, spec: walk_mjx.WalkSpec | str = "simple_biped", target_speed: float | None = None):
+    def __init__(self, spec: walk_mjx.WalkSpec | str = "simple_biped", target_speed: float | None = None,
+                 terrain=None):
+        """terrain: biped_sim.terrain.Terrain (None = 평지). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다."""
         self.W = walk_mjx
         self.spec = walk_mjx.SPECS[spec] if isinstance(spec, str) else spec
-        self.model, self.info = walk_mjx.build_mjx_model(self.spec)
+        self.terrain = terrain
+        self.model, self.info = walk_mjx.build_mjx_model(self.spec, terrain)
         self.data = mujoco.MjData(self.model)
         self.target_speed = self.spec.target_speed if target_speed is None else target_speed
         self.n_substeps = round(walk_mjx.CONTROL_DT / walk_mjx.PHYSICS_DT)
@@ -126,20 +129,27 @@ class MujocoRunner:
         rot = d.xmat[i["base_body"]].reshape(3, 3)
         phase = 2 * np.pi * self.t / self.spec.gait_period
         return np.concatenate([rot.T @ [0, 0, -1.0], d.qvel[3:6], rot.T @ d.qvel[0:3],
-                               [d.xpos[i["base_body"], 2] - self.spec.nominal_height],
+                               [d.xpos[i["base_body"], 2] - self.ground(*d.xpos[i["base_body"], :2])
+                                - self.spec.nominal_height],
                                d.qpos[i["qpos_idx"]] - i["q_home"], 0.1 * d.qvel[i["qvel_idx"]],
                                self.last_action, [self.target_speed], [np.sin(phase), np.cos(phase)]]
                               ).astype(np.float32)
 
 
+    def ground(self, x, y):
+        """(x, y)의 땅 높이 [m]. 평지면 0."""
+        return 0.0 if self.terrain is None else self.terrain.height_at(x, y)
+
+
 class MjxRunner(MujocoRunner):
     """학습 때와 똑같은 MJX 환경으로 재생 (화면 표시·기록용으로 매 스텝 MuJoCo 데이터에 복사)."""
 
-    def __init__(self, spec: walk_mjx.WalkSpec | str = "simple_biped", target_speed: float | None = None):
-        super().__init__(spec, target_speed)
+    def __init__(self, spec: walk_mjx.WalkSpec | str = "simple_biped", target_speed: float | None = None,
+                 terrain=None):
+        super().__init__(spec, target_speed, terrain)
         import jax
         self.jax = jax
-        self.env = walk_mjx.BipedWalkMjxEnv(self.spec, target_speed=self.target_speed)
+        self.env = walk_mjx.BipedWalkMjxEnv(self.spec, target_speed=self.target_speed, terrain=terrain)
         self._reset, self._step = jax.jit(self.env.reset), jax.jit(self.env.step)
 
     def reset(self) -> np.ndarray:
@@ -157,9 +167,9 @@ class MjxRunner(MujocoRunner):
         mjx.get_data_into(self.data, self.model, self.s.pipeline_state)
 
 
-def make_runner(config: dict, backend: str = "mujoco") -> MujocoRunner:
+def make_runner(config: dict, backend: str = "mujoco", terrain=None) -> MujocoRunner:
     """학습 설정(config.json)에 맞는 재생기. backend: mujoco(일반 MuJoCo) / mjx(학습과 같은 시뮬레이터)."""
-    return (MjxRunner if backend == "mjx" else MujocoRunner)(get_spec(config), config.get("target_speed"))
+    return (MjxRunner if backend == "mjx" else MujocoRunner)(get_spec(config), config.get("target_speed"), terrain)
 
 
 # ---------------------------------------------------------------------------- 한 에피소드 기록
@@ -180,7 +190,7 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
 
     obs = runner.reset()
     x0 = d.xpos[info["base_body"], 0]
-    rec = {k: [] for k in ("t", "q", "tau", "foot", "base", "rpy", "legs", "toe", "heel")}
+    rec = {k: [] for k in ("t", "q", "tau", "foot", "foot_rel_z", "base", "rpy", "legs", "toe", "heel")}
     fell = False
     for k in range(round(EPISODE_SECONDS / W.CONTROL_DT)):
         t0 = time.perf_counter()
@@ -191,6 +201,7 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
         rec["q"].append(d.qpos[info["qpos_idx"]].copy())
         rec["tau"].append(d.ctrl.copy())
         rec["foot"].append(d.xpos[info["foot_bodies"]].copy())
+        rec["foot_rel_z"].append([d.xpos[b, 2] - runner.ground(*d.xpos[b, :2]) for b in info["foot_bodies"]])
         rec["base"].append(d.xpos[info["base_body"]].copy())
         rec["rpy"].append([np.arctan2(rot[2, 1], rot[2, 2]), np.arcsin(-np.clip(rot[2, 0], -1, 1)),
                            np.arctan2(rot[1, 0], rot[0, 0])])
@@ -202,18 +213,19 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
         rec["heel"].append([d.geom_xpos[g] - a for g, a in zip(foot_geoms, axes)])
         if on_step is not None:
             on_step({"t": t, "vx": float(d.qvel[0]), "distance": float(d.xpos[info["base_body"], 0] - x0),
-                     "foot_z": rec["foot"][-1][:, 2]})
+                     "foot_z": np.array(rec["foot_rel_z"][-1])})
         if viewer is not None:
             if not viewer.is_running():
                 break
             viewer.sync()
             time.sleep(max(0.0, W.CONTROL_DT - (time.perf_counter() - t0)))   # 실제 시간 속도로
-        if np.arccos(np.clip(rot[2, 2], -1, 1)) > W.FALL_TILT or d.xpos[info["base_body"], 2] < sp.fall_height:
+        base_height = d.xpos[info["base_body"], 2] - runner.ground(*d.xpos[info["base_body"], :2])
+        if np.arccos(np.clip(rot[2, 2], -1, 1)) > W.FALL_TILT or base_height < sp.fall_height:
             fell = True
             break
     rec = {k: np.asarray(v) for k, v in rec.items()}
-    rec["raw_contact"] = rec["foot"][:, :, 2] < sp.foot_contact_z
-    rec["contact"], rec["taps"] = merge_taps(rec["raw_contact"], rec["foot"][:, :, 2], sp.foot_contact_z)
+    rec["raw_contact"] = rec["foot_rel_z"] < sp.foot_contact_z      # 그 자리 땅 기준 발 높이로 접촉 판정
+    rec["contact"], rec["taps"] = merge_taps(rec["raw_contact"], rec["foot_rel_z"], sp.foot_contact_z)
     rec["fell"] = fell
     rec["dt"] = W.CONTROL_DT
     rec["gait_period"] = sp.gait_period
@@ -280,8 +292,9 @@ def gait_metrics(rec: dict, info: dict) -> dict:
         swing = [(td[td > a][0] - a) * dt for a in lo if np.any(td > a)]
         step_len = [foot[a, i, 0] - foot[a, 1 - i, 0] for a in td]     # 착지할 때 반대 발보다 얼마나 앞에
         on_ground = c[:, i] & steady
-        ground_z = np.median(foot[on_ground, i, 2]) if on_ground.any() else 0.0
-        clearance = [foot[a:b, i, 2].max() - ground_z for a in lo for b in td[td > a][:1]]
+        rel_z = rec["foot_rel_z"][:, i]                                 # 그 자리 땅 기준 발 높이
+        ground_z = np.median(rel_z[on_ground]) if on_ground.any() else 0.0
+        clearance = [rel_z[a:b].max() - ground_z for a in lo for b in td[td > a][:1]]
         per_side[side] = {
             "touchdowns": int(len(td)), "taps": int(rec["taps"][i]),
             "stance_s": float(np.mean(stance)) if stance else 0.0,

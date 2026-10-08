@@ -180,3 +180,20 @@ def test_pretrained_walk_policy_walks_symmetrically():
     assert m["both_air_pct"] < 5
     assert m["limp_score_pct"] < 5          # 측정값 2.1 %
     assert abs(m["yaw_deg"]) < 10
+
+
+def test_terrain_env_measures_height_from_local_ground():
+    """지형 위 학습 환경: GPU 쪽 땅 높이 계산(ground)이 terrain.height_at과 같고, 무작위 출발 위치에서
+    몸통이 그 자리 땅 위 기준 높이에 놓인다 (관측의 높이 오차가 작다)."""
+    from biped_sim.terrain import make_training_terrain
+
+    terrain = make_training_terrain(seed=0, half_size=2.0, resolution=0.08)
+    env = walk_mjx.BipedWalkMjxEnv("simple_biped", terrain=terrain, spawn_area=((-1.0, 1.0), (-1.0, 1.0)))
+    xy = np.random.default_rng(0).uniform(-1.9, 1.9, (50, 2))
+    np.testing.assert_allclose(np.asarray(env.ground(jnp.asarray(xy, jnp.float32))),
+                               terrain.height_at(xy[:, 0], xy[:, 1]), atol=1e-5)
+    for seed in range(3):
+        state = jax.jit(env.reset)(jax.random.PRNGKey(seed))
+        base_xy = np.asarray(state.pipeline_state.xpos[env.base_body, :2])
+        assert np.all(np.abs(base_xy) <= 1.0 + 1e-6)                     # 출발 구역 안
+        assert abs(float(state.obs[9])) < 0.04                             # 높이 오차 (그 자리 땅 기준)

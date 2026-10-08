@@ -167,10 +167,11 @@ def mirror_table(model: mujoco.MjModel, joints, foot_frames, delta: float = 0.2)
     return left, right, sign
 
 
-def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"]) -> tuple[mujoco.MjModel, dict]:
-    """GPU 학습용 MuJoCo 모델 (발-바닥 충돌만) + 관절 인덱스 정보."""
+def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tuple[mujoco.MjModel, dict]:
+    """GPU 학습용 MuJoCo 모델 (발-바닥 충돌만) + 관절 인덱스 정보. terrain: biped_sim.terrain.Terrain (None = 평지)"""
     cfg = spec.robot
-    mj_spec = build_robot_spec(cfg.urdf, cfg.sim_config(fixed_base=False, timestep=PHYSICS_DT, **spec.sim_overrides))
+    mj_spec = build_robot_spec(cfg.urdf, cfg.sim_config(fixed_base=False, timestep=PHYSICS_DT, terrain=terrain,
+                                                        **spec.sim_overrides))
     model = mj_spec.compile()
     model.opt.iterations = 4
     model.opt.ls_iterations = 8
@@ -204,16 +205,19 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"]) -> tuple[mujoco.MjMo
 
 class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
-                 reward_weights: dict | None = None):
+                 reward_weights: dict | None = None, terrain=None, spawn_area=None):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
-        reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0})."""
+        reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
+        terrain: 울퉁불퉁한 지형 (biped_sim.terrain.Terrain). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다.
+        spawn_area: ((x_min, x_max), (y_min, y_max)) — 에피소드마다 이 안의 무작위 위치에서 출발 (넓은 지형의 여러 곳 경험)"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
         sp = self.spec
         unknown = set(reward_weights or {}) - set(sp.reward_weights)
         if unknown:
             raise ValueError(f"모르는 보상 항목 {sorted(unknown)} (사용 가능: {sorted(sp.reward_weights)})")
         self.reward_weights = {**sp.reward_weights, **(reward_weights or {})}
-        self.mj_model, info = build_mjx_model(sp)
+        self.terrain, self.spawn_area = terrain, spawn_area
+        self.mj_model, info = build_mjx_model(sp, terrain)
         self.mx = mjx.put_model(self.mj_model)
         self.target_speed = sp.target_speed if target_speed is None else target_speed
         self.step_target = max(self.target_speed * sp.gait_period / 2, 0.02)   # 목표 보폭 [m] = 속도 × 반 박자
@@ -236,6 +240,22 @@ class BipedWalkMjxEnv(Env):
         self.mirror_sign = f32(info["mirror_sign"])
         self.joint_names = info["joint_names"]
         self.ref_fwd, self.ref_lift, self.ref_is_right = self._reference_coefficients(info)
+        if terrain is not None:
+            self.ground_heights = f32(terrain.heights)
+            self.ground_origin = f32([terrain.center[0] - terrain.size_x, terrain.center[1] - terrain.size_y])
+            self.ground_step = f32([2 * terrain.size_x / (terrain.ncol - 1), 2 * terrain.size_y / (terrain.nrow - 1)])
+
+    def ground(self, xy):
+        """위치 xy [..., 2]의 땅 높이 (지형 격자 선형 보간 = terrain.Terrain.height_at). 평지면 0."""
+        if self.terrain is None:
+            return jnp.zeros(xy.shape[:-1])
+        g = (xy - self.ground_origin) / self.ground_step                 # [..., (열, 행)]
+        h = self.ground_heights
+        g = jnp.clip(g, 0.0, jnp.array([h.shape[1], h.shape[0]], jnp.float32) - 1.000001)
+        c0, r0 = jnp.floor(g[..., 0]).astype(int), jnp.floor(g[..., 1]).astype(int)
+        fc, fr = g[..., 0] - c0, g[..., 1] - r0
+        return ((1 - fr) * ((1 - fc) * h[r0, c0] + fc * h[r0, c0 + 1])
+                + fr * ((1 - fc) * h[r0 + 1, c0] + fc * h[r0 + 1, c0 + 1]))
 
     # ------------------------------------------------------------------ Brax Env API
     @property
@@ -251,9 +271,14 @@ class BipedWalkMjxEnv(Env):
         return "mjx"
 
     def reset(self, rng: jax.Array) -> State:
-        rng, k1 = jax.random.split(rng)
+        rng, k1, k2 = jax.random.split(rng, 3)
         n = self.spec.n
         qpos = self.home_qpos.at[self.qpos_idx].add(jax.random.uniform(k1, (n,), minval=-0.03, maxval=0.03))
+        if self.spawn_area is not None:   # 넓은 지형의 무작위 위치에서 출발: 두 발 밑의 땅 중 높은 쪽에 맞춰 올려놓음
+            (x0, x1), (y0, y1) = self.spawn_area
+            xy = jax.random.uniform(k2, (2,), minval=jnp.array([x0, y0]), maxval=jnp.array([x1, y1]))
+            feet = xy + jnp.array([[0.0, 0.1], [0.0, -0.1], [0.06, 0.1], [0.06, -0.1], [-0.06, 0.1], [-0.06, -0.1]])
+            qpos = qpos.at[0:2].set(xy).at[2].add(jnp.max(self.ground(feet)) + 0.003)
         data = mjx.make_data(self.mj_model).replace(qpos=qpos)
         data = mjx.forward(self.mx, data)
         info = {
@@ -296,8 +321,8 @@ class BipedWalkMjxEnv(Env):
         tilt_cos = rot[2, 2]
         tilt = jnp.arccos(jnp.clip(tilt_cos, -1.0, 1.0))
         yaw = jnp.arctan2(rot[1, 0], rot[0, 0])
-        height = data.xpos[self.base_body, 2]
-        foot_z = data.xpos[self.foot_bodies, 2]
+        height = data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2])   # 그 자리 땅 기준
+        foot_z = data.xpos[self.foot_bodies, 2] - self.ground(data.xpos[self.foot_bodies, :2])
         contact = foot_z < sp.foot_contact_z
 
         # --- 발 공중 시간: 착지하는 순간 (공중에 있던 시간 − 기준)만큼 보상
@@ -418,7 +443,8 @@ class BipedWalkMjxEnv(Env):
             gravity_body,
             ang_body,
             vel_body,
-            jnp.array([data.xpos[self.base_body, 2] - self.spec.nominal_height]),
+            jnp.array([data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2])
+                       - self.spec.nominal_height]),
             data.qpos[self.qpos_idx] - self.q_home,
             0.1 * data.qvel[self.qvel_idx],
             info["last_action"],

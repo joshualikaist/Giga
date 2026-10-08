@@ -166,8 +166,8 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `24 passed, 16 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(6개, 그 환경에서
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 17 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(7개, 그 환경에서
 `pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
@@ -291,7 +291,16 @@ python learning/train_walk_gpu.py --robot open_duck_mini --reward reference=3 --
 
 > 오리는 `--watch` 없이 학습하세요. 학습 화면이 오리의 CAD 메시를 계속 그리면 학습이 4.6배 느려집니다 (실측).
 
-오픈소스 URDF 점검표, 확인 과정, 두 학습 방식 비교 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
+울퉁불퉁한 지형(언덕·불규칙한 경사로·장애물) 실험과 지형 학습:
+
+```bash
+python learning/terrain_trial.py --params <정책.pkl>          # MuJoCo 화면: 지형마다 새 지형으로 걸려 보기
+python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --init-from <평지 정책.pkl> --steps 20000000
+```
+
+평지에서만 배운 오리는 험한 지형에서 10번 중 2~4번만 버텼고, 지형에서 더 배운 오리는 10번 모두 버텼습니다 (docs/09 §7).
+
+오픈소스 URDF 점검표, 확인 과정, 두 학습 방식 비교, 지형 실험 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
 
 ### 막혔을 때
 
@@ -374,6 +383,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크): SIMPLE_BIPED, OPEN_DUCK_MINI
 │   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), passive_viewer(안전한 뷰어 종료), 스냅샷, 카메라
 │   ├── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
+│   ├── terrain.py                ← 울퉁불퉁한 지형(높이맵): 언덕·불규칙한 경사로·장애물·학습용 넓은 지형
 │   └── envs/                     ← 강화학습 환경
 │       ├── balance.py            ←   밀기 버티기 (Gymnasium, CPU) + 평가 함수
 │       └── walk_mjx.py           ←   보행 (Brax, GPU MJX) — .venv-mjx에서만
@@ -395,6 +405,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
 │   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
 │   ├── test_open_duck.py         ← 오리 로봇: 빌더 보완, 바닥 1 mm 위 시작, 좌우 부호, 서 있기 (파일 있을 때만)
+│   ├── test_terrain.py           ← 지형 높이 = MuJoCo 실제 표면(광선으로 확인), 바꿔 끼우기, 출발 자리
 │   └── test_walk_mjx.py          ← GPU 보행 환경·관측 일치·학습 화면·걸음 분석·미리 학습된 걸음 (.venv-mjx에서만)
 │
 ├── learning/                     ── 강화학습 예제 (CPU: docs/07, GPU 보행: docs/08)
@@ -405,6 +416,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── walk_tools.py             ← 보행 공용 도구: 정책 불러오기, 재생기, 에피소드 기록, 걸음 수치
 │   ├── live_dashboard.py         ← MuJoCo 창 안의 학습 그래프·발 접촉 그래프 (Enter로 화면 전환)
 │   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
+│   ├── terrain_trial.py          ← 울퉁불퉁한 지형 실험: MuJoCo 화면에서 에피소드마다 새 지형 (--headless는 통계)
 │   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),
 │                                    walk_policy.pkl/.json (다듬은 걸음, docs/08 §6)
 │

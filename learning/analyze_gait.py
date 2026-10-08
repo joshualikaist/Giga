@@ -159,10 +159,10 @@ def save_plots(rec, metrics, info, title, path):
 
     ax = axes[1, 0]
     for i, side in enumerate(("left", "right")):
-        ax.plot(t[win], 100 * rec["foot"][win, i, 2], color=colors[side], label=f"{side} ankle height")
+        ax.plot(t[win], 100 * rec["foot_rel_z"][win, i], color=colors[side], label=f"{side} foot height")
         down = rec["contact"][win, i]
         ax.fill_between(t[win], -1.5 - 1.5 * i, -0.3 - 1.5 * i, where=down, color=colors[side], alpha=0.6, step="mid")
-    ax.set_title("foot height [cm] (bars below: foot on ground)")
+    ax.set_title("foot height above ground [cm] (bars below: foot on ground)")
     ax.set_xlabel("time [s]")
     ax.legend(loc="upper right")
     ax.grid(alpha=0.3)
