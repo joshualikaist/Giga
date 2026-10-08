@@ -36,8 +36,8 @@ TAP_HEIGHT = 0.015       # [m] 발을 이보다 낮게 들었다 다시 닿으�
 
 # ---------------------------------------------------------------------------- 정책
 def get_spec(config: dict) -> walk_mjx.WalkSpec:
-    """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped)."""
-    return walk_mjx.SPECS[config.get("robot", "simple_biped")]
+    """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped, servo 항목이 없음 = ideal)."""
+    return walk_mjx.with_servo(walk_mjx.SPECS[config.get("robot", "simple_biped")], config.get("servo", "ideal"))
 
 
 @functools.lru_cache(maxsize=4)
@@ -105,7 +105,7 @@ class MujocoRunner:
         self.data = mujoco.MjData(self.model)
         self.target_speed = self.spec.target_speed if target_speed is None else target_speed
         self.n_substeps = round(walk_mjx.CONTROL_DT / walk_mjx.PHYSICS_DT)
-        self.on_substep = None   # 물리 스텝마다 부를 함수 f(data) (feasibility.py가 토크 최댓값을 놓치지 않게)
+        self.on_substep = None   # 물리 스텝 직전(토크를 정한 뒤)마다 부를 함수 f(data) (feasibility.py가 토크 최댓값을 놓치지 않게)
 
     def reset(self) -> np.ndarray:
         mujoco.mj_resetData(self.model, self.data)
@@ -124,9 +124,9 @@ class MujocoRunner:
         for _ in range(self.n_substeps):   # 물리 1스텝마다 PD로 토크 계산 (모터 드라이버 역할)
             q, dq = d.qpos[i["act_qpos_idx"]], d.qvel[i["act_qvel_idx"]]
             d.ctrl[:] = np.clip(i["kp"] * (q_des - q) - i["kd"] * dq, i["tau_limit"][:, 0], i["tau_limit"][:, 1])
-            mujoco.mj_step(self.model, d)
             if self.on_substep:
                 self.on_substep(d)
+            mujoco.mj_step(self.model, d)
         self.t += walk_mjx.CONTROL_DT
         self.last_action = action
         return self.obs()

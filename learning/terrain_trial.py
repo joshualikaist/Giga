@@ -5,6 +5,8 @@
     python learning/terrain_trial.py --params <정책.pkl>                       # 화면: 지형마다 에피소드 3번, 매번 새 지형
     python learning/terrain_trial.py --params <정책.pkl> --difficulty 0.8      # 더 험하게 (0~1)
     python learning/terrain_trial.py --params <정책.pkl> --headless --episodes 20   # 화면 없이 통계만 (빠름)
+    python learning/terrain_trial.py --params <정책.pkl> --friction 0.5        # 미끄러운 바닥 (기본 마찰 1.0)
+    python learning/terrain_trial.py --params <정책.pkl> --servo open_duck     # 다른 서보 모델로 (기본: 학습 때 모델)
 
 지형 (biped_sim/terrain.py, 크기는 오리 로봇 기준. 출발 자리 지름 0.7 m는 평평)
     flat       평지 (비교 기준)
@@ -34,14 +36,20 @@ def main():
     parser.add_argument("--episodes", type=int, default=3, help="지형 종류마다 에피소드 수 (매번 새 지형)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--headless", action="store_true", help="화면 없이 빠르게 (통계용)")
+    parser.add_argument("--friction", type=float, default=None, help="바닥 마찰 계수 (기본: MuJoCo 1.0)")
+    parser.add_argument("--servo", default=None, help="서보 모델을 바꿔 시험 (기본: 학습 때와 같음). ideal / open_duck")
     args = parser.parse_args()
 
     policy, config = load_policy(args.params.resolve())
+    if args.servo:   # 예: ideal 서보로 배운 정책을 실물 측정 모델(open_duck)에서
+        config = {**config, "servo": args.servo}
     spec = get_spec(config)
     runner = make_runner(config, terrain=make_terrain("flat"))   # 지형 격자를 가진 모델 (지형은 에피소드마다 바꿔 끼움)
     hfield = runner.model.hfield("terrain").id
-    print(f"정책: {args.params} | 로봇 {spec.name} | 지형 {', '.join(args.kinds)} | 험한 정도 {args.difficulty} "
-          f"| 종류마다 {args.episodes}번")
+    if args.friction is not None:   # 접촉 마찰 = 두 geom 중 큰 값 → 발·바닥 모두
+        runner.model.geom_friction[:, 0] = args.friction
+    print(f"정책: {args.params} | 로봇 {spec.name} (서보 {spec.servo}) | 지형 {', '.join(args.kinds)} | 험한 정도 "
+          f"{args.difficulty} | 마찰 {runner.model.geom_friction[0, 0]:g} | 종류마다 {args.episodes}번")
 
     results = {k: [] for k in args.kinds}
 

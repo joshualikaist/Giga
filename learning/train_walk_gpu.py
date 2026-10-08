@@ -6,6 +6,8 @@
     python learning/train_walk_gpu.py --watch               # 기본 3,000만 스텝 + 학습 화면(그래프·로봇) 함께
     python learning/train_walk_gpu.py --robot open_duck_mini --watch   # 오리 로봇 (bash scripts/get_open_duck.sh 먼저)
     python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --init-from <평지 정책.pkl>  # 울퉁불퉁한 지형
+    python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --friction 0.4 1.0 \
+        --terrain rough --init-from <정책.pkl>             # 실물에 가까운 서보 모델 + 바닥 마찰 무작위 (docs/09 §9)
     python learning/train_walk_gpu.py                       # 화면 없이 학습만
     python learning/train_walk_gpu.py --steps 2000000       # 짧게 동작 확인
     python learning/train_walk_gpu.py --reward symmetry=0 --name walk_nosym     # 보상 바꿔 실험 (대칭 보상 끄기)
@@ -70,6 +72,11 @@ def main():
     parser.add_argument("--terrain", choices=["flat", "rough"], default="flat",
                         help="rough: 12 × 12 m 울퉁불퉁한 지형(언덕·경사로·장애물)의 무작위 위치에서 출발 (biped_sim/terrain.py)")
     parser.add_argument("--terrain-seed", type=int, default=0, help="rough 지형을 만드는 난수 시드")
+    parser.add_argument("--servo", default="ideal",
+                        help="서보 모델: ideal(토크가 속도와 상관없음, 기본) / open_duck(실물 측정 모델: 빨리 돌수록 토크 감소). "
+                             "biped_sim/envs/walk_mjx.py SERVO_MODELS")
+    parser.add_argument("--friction", type=float, nargs=2, default=None, metavar=("최소", "최대"),
+                        help="환경마다 바닥 마찰 계수를 이 범위에서 무작위로 (기본: 1.0 고정)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
                         help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
                              "예: output/learning/<YYMMDD_HHMMSS>_walk/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
@@ -93,7 +100,9 @@ def main():
 
     if args.robot not in walk_mjx.SPECS:
         raise SystemExit(f"모르는 로봇 '{args.robot}'. 사용 가능: {', '.join(walk_mjx.SPECS)}")
-    spec = walk_mjx.SPECS[args.robot]
+    if args.servo not in walk_mjx.SERVO_MODELS:
+        raise SystemExit(f"모르는 서보 모델 '{args.servo}'. 사용 가능: {', '.join(walk_mjx.SERVO_MODELS)}")
+    spec = walk_mjx.with_servo(walk_mjx.SPECS[args.robot], args.servo)
     if not spec.robot.urdf.exists():
         raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
     speed = spec.target_speed if args.speed is None else args.speed
@@ -120,6 +129,7 @@ def main():
         "target_speed": speed, "steps": args.steps, "envs": args.envs, "seed": args.seed,
         "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT, "gait_period": spec.gait_period,
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
+        "servo": args.servo, "friction_range": args.friction,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08},
         "policy_hidden": [128, 128, 128], "value_hidden": [256, 256, 256],
@@ -131,6 +141,7 @@ def main():
           + (" — 울퉁불퉁한 지형 12 × 12 m, 무작위 출발 위치" if args.terrain == "rough" else ""))
     print(f"학습: Brax PPO, {args.steps:,} 스텝, GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
     print(f"보상 가중치: {config['reward_weights']}")
+    print(f"서보 모델: {args.servo}" + (f", 바닥 마찰 {args.friction[0]}~{args.friction[1]} 무작위" if args.friction else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -152,7 +163,7 @@ def main():
         terrain = make_training_terrain(seed=args.terrain_seed, half_size=6.0, resolution=0.08)
         spawn_area = ((-5.5, 3.5), (-5.5, 5.5))
     env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
-                                   spawn_area=spawn_area)
+                                   spawn_area=spawn_area, friction_range=args.friction)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()

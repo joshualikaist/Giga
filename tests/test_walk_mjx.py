@@ -97,6 +97,20 @@ def test_open_duck_walk_env():
 
 @pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
                     reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_open_duck_servo_model_and_random_friction():
+    """실물 측정 서보 모델(--servo open_duck)과 바닥 마찰 무작위(--friction): 모델에 반영되고, 행동 0으로 서 있다."""
+    spec = walk_mjx.with_servo(walk_mjx.SPECS["open_duck_mini"], "open_duck")
+    duck = walk_mjx.BipedWalkMjxEnv(spec, friction_range=(0.4, 1.0))
+    m = duck.mj_model
+    assert float(duck.kp[0]) == pytest.approx(13.37) and float(duck.kd[0]) == 0.0
+    assert m.dof_damping[6] == pytest.approx(0.56) and m.dof_frictionloss[6] == pytest.approx(0.068)
+    state = _stands_with_zero_action(duck)
+    assert 0.4 <= float(state.info["friction"]) <= 1.0
+    assert walk_mjx.with_servo(walk_mjx.SPECS["open_duck_mini"], "ideal") is walk_mjx.SPECS["open_duck_mini"]
+
+
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
 def test_feasibility_estimates_for_open_duck():
     """동역학 한계 계산(learning/feasibility.py, docs/09 §8): 2026-10-08 실측값이 그대로 나오는지와 물리적으로 맞는 관계."""
     import feasibility as F
@@ -115,7 +129,7 @@ def test_feasibility_estimates_for_open_duck():
     assert 0 < s1 < s2 < w / 2                            # 무게중심은 디딤 발까지 가지 않음
     assert F.available_torque(np.array([1.0, 1.0]), np.array([0.0, F.SERVO["noload"]]), "datasheet") == \
         pytest.approx([F.SERVO["stall"], 0.0])
-    assert F.available_torque(np.array([1.0]), np.array([-3.0]), "datasheet")[0] == F.SERVO["stall"]   # 브레이크 방향
+    assert F.available_torque(np.array([1.0]), np.array([-3.0]), "datasheet")[0] > F.SERVO["stall"]    # 브레이크 방향
 
 
 def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):

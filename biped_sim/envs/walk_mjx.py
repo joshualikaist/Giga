@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import io
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import jax
 import jax.numpy as jnp
@@ -93,6 +93,8 @@ class WalkSpec:
     reference_gait: dict | None = None
     reward_weights: dict = field(default_factory=lambda: dict(REWARD_WEIGHTS))
     sim_overrides: dict = field(default_factory=dict)   # 이 과제용 SimConfig (충돌 단순화 등)
+    pd_gains: tuple[float, float] | None = None          # (kp, kd) 모든 구동 관절에. None = 로봇 설정(RobotConfig) 값
+    servo: str = "ideal"                                  # 서보 모델 이름 (SERVO_MODELS, with_servo로 바꿈)
 
     @property
     def n(self) -> int:
@@ -138,6 +140,27 @@ SPECS = {
         sim_overrides=dict(collision_boxes=_DUCK_FEET, collision_bodies=tuple(_DUCK_FEET)),
     ),
 }
+
+
+# 서보 모델 (docs/09 §8~9). ideal = 지금까지의 학습: 빨리 돌아도 최대 토크를 그대로 냄 (관절 damping 0).
+# open_duck = Open Duck 팀이 실물(STS3215 7.4 V)을 Rhoban BAM으로 측정해 학습에 쓰는 모델 (Open_Duck_Playground
+#   xmls/open_duck_mini_v2.xml의 class sts3215): 위치 kp 13.37, kv 0, 토크 ±3.23, 관절 damping 0.56 (역기전력 —
+#   빨리 돌수록 토크가 줄어 약 5.8 rad/s에서 0), frictionloss 0.068, armature 0.027
+SERVO_MODELS = {
+    "ideal": {},
+    "open_duck": dict(pd_gains=(13.37, 0.0), sim=dict(effort_limits=3.23, joint_damping=0.56, joint_frictionloss=0.068,
+                                                      joint_armature=0.027)),
+}
+
+
+def with_servo(spec: WalkSpec, servo: str) -> WalkSpec:
+    """같은 보행 과제를 다른 서보 모델로. 학습 설정(config.json)의 'servo'로 재생·분석도 같은 모델을 쓴다."""
+    if servo not in SERVO_MODELS:
+        raise ValueError(f"모르는 서보 모델 '{servo}' (사용 가능: {', '.join(SERVO_MODELS)})")
+    model = SERVO_MODELS[servo]
+    if not model:
+        return spec
+    return replace(spec, servo=servo, pd_gains=model["pd_gains"], sim_overrides={**spec.sim_overrides, **model["sim"]})
 
 
 def mirror_table(model: mujoco.MjModel, joints, foot_frames, delta: float = 0.2) -> tuple[list, list, list]:
@@ -192,8 +215,8 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
         "act_qvel_idx": np.array([model.jnt_dofadr[j] for j in act_joints]),
         "act_home": np.array([cfg.home_pose[n] for n in act_names]),
         "act_range": model.jnt_range[act_joints].copy(),
-        "kp": np.array([cfg.kp[n] for n in act_names]),
-        "kd": np.array([cfg.kd[n] for n in act_names]),
+        "kp": np.array([cfg.kp[n] if spec.pd_gains is None else spec.pd_gains[0] for n in act_names]),
+        "kd": np.array([cfg.kd[n] if spec.pd_gains is None else spec.pd_gains[1] for n in act_names]),
         "tau_limit": model.actuator_ctrlrange.copy(),
         "base_body": int(model.joint(FREEJOINT_NAME).bodyid[0]),
         "foot_bodies": np.array(feet),
@@ -205,18 +228,20 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
 
 class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
-                 reward_weights: dict | None = None, terrain=None, spawn_area=None):
+                 reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
         reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
         terrain: 울퉁불퉁한 지형 (biped_sim.terrain.Terrain). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다.
-        spawn_area: ((x_min, x_max), (y_min, y_max)) — 에피소드마다 이 안의 무작위 위치에서 출발 (넓은 지형의 여러 곳 경험)"""
+        spawn_area: ((x_min, x_max), (y_min, y_max)) — 에피소드마다 이 안의 무작위 위치에서 출발 (넓은 지형의 여러 곳 경험)
+        friction_range: (최소, 최대) — 환경마다 바닥 마찰 계수를 이 안에서 무작위로 (None = MuJoCo 기본 1.0).
+            Brax의 자동 리셋은 첫 리셋 상태로 되돌리므로 환경마다 학습 내내 같은 값 (1024개 환경이 범위를 골고루 나눠 가짐)"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
         sp = self.spec
         unknown = set(reward_weights or {}) - set(sp.reward_weights)
         if unknown:
             raise ValueError(f"모르는 보상 항목 {sorted(unknown)} (사용 가능: {sorted(sp.reward_weights)})")
         self.reward_weights = {**sp.reward_weights, **(reward_weights or {})}
-        self.terrain, self.spawn_area = terrain, spawn_area
+        self.terrain, self.spawn_area, self.friction_range = terrain, spawn_area, friction_range
         self.mj_model, info = build_mjx_model(sp, terrain)
         self.mx = mjx.put_model(self.mj_model)
         self.target_speed = sp.target_speed if target_speed is None else target_speed
@@ -271,7 +296,7 @@ class BipedWalkMjxEnv(Env):
         return "mjx"
 
     def reset(self, rng: jax.Array) -> State:
-        rng, k1, k2 = jax.random.split(rng, 3)
+        rng, k1, k2, k3 = jax.random.split(rng, 4)
         n = self.spec.n
         qpos = self.home_qpos.at[self.qpos_idx].add(jax.random.uniform(k1, (n,), minval=-0.03, maxval=0.03))
         if self.spawn_area is not None:   # 넓은 지형의 무작위 위치에서 출발: 두 발 밑의 땅 중 높은 쪽에 맞춰 올려놓음
@@ -288,6 +313,8 @@ class BipedWalkMjxEnv(Env):
             "feet_air_time": jnp.zeros(2),
             "q_hist": jnp.tile(qpos[self.qpos_idx], (self.spec.half_period_steps, 1)),   # 반 박자 동안 관절 각도
         }
+        if self.friction_range is not None:
+            info["friction"] = jax.random.uniform(k3, (), minval=self.friction_range[0], maxval=self.friction_range[1])
         metrics = {f"reward/{k}": jnp.zeros(()) for k in self.reward_weights}
         metrics.update({f"gait/{k}": jnp.zeros(()) for k in GAIT_METRICS})
         metrics.update({"forward_speed": jnp.zeros(())})
@@ -302,11 +329,15 @@ class BipedWalkMjxEnv(Env):
         q_des = self.act_home.at[self.policy_act].add(sp.action_scale * action)
         q_des = jnp.clip(q_des, self.act_low, self.act_high)
 
+        mx = self.mx
+        if self.friction_range is not None:   # 접촉 마찰 = 두 geom 중 큰 값 → 충돌하는 geom(발·바닥) 모두 같은 값으로
+            mx = mx.replace(geom_friction=mx.geom_friction.at[:, 0].set(state.info["friction"]))
+
         def substep(data, _):  # 물리 1스텝마다 PD로 토크 계산 (모터 드라이버 역할)
             q = data.qpos[self.act_qpos_idx]
             dq = data.qvel[self.act_qvel_idx]
             tau = jnp.clip(self.kp * (q_des - q) - self.kd * dq, self.tau_low, self.tau_high)
-            data = mjx.step(self.mx, data.replace(ctrl=tau))
+            data = mjx.step(mx, data.replace(ctrl=tau))
             return data, tau
 
         data, taus = jax.lax.scan(substep, state.pipeline_state, None, length=self.n_substeps)

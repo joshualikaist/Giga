@@ -166,8 +166,8 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 18 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(8개, 그 환경에서
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 19 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(9개, 그 환경에서
 `pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
@@ -298,6 +298,8 @@ python learning/train_walk_gpu.py --robot open_duck_mini --reward reference=3 --
 ```bash
 python learning/terrain_trial.py --params <정책.pkl>          # MuJoCo 화면: 지형마다 새 지형으로 걸려 보기
 python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --init-from <평지 정책.pkl> --steps 20000000
+python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --servo open_duck --friction 0.4 1.0 \
+    --init-from <지형 정책.pkl> --steps 20000000                # 실물 측정 서보 모델 + 바닥 마찰 무작위 (docs/09 §9)
 ```
 
 평지에서만 배운 오리는 험한 지형에서 10번 중 2~4번만 버텼고, 지형에서 더 배운 오리는 10번 모두 버텼습니다 (docs/09 §7).

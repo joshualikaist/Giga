@@ -15,7 +15,7 @@
     토크-속도 한계선 밖으로 나가는 순간이 있는지 — 두 가지 서보 모델로:
       데이터시트   τ ≤ 1.91·(1 − |ω|/4.4)  (STS3215 7.4 V: 정지 토크 19.5 kg·cm, 무부하 0.238 s/60°. 보수적)
       Open Duck    τ ≤ 3.23 − 0.56·|ω|     (Open Duck Playground가 실물을 측정해 맞춘 모델: 토크 한계 + 관절 damping)
-    (토크와 속도 방향이 같을 때 = 모터가 일을 할 때만 속도에 따라 줄어듦. 반대 방향(브레이크)이면 정지 토크까지)
+    (토크와 속도 방향이 같을 때 = 모터가 일을 할 때 속도에 따라 줄어듦. 반대 방향(브레이크)이면 오히려 늘어남)
 """
 import argparse
 import itertools
@@ -38,11 +38,13 @@ STEADY_S = 1.0                                      # 출발 직후(일어서며
 
 
 def available_torque(tau, vel, model):
-    """그 순간 속도에서 서보가 낼 수 있는 최대 토크. 모터가 일을 할 때(τ·ω > 0)만 속도에 따라 줄어든다."""
-    w = np.where(tau * vel > 0, np.abs(vel), 0.0)
+    """그 순간 속도에서 서보가 그 방향으로 낼 수 있는 최대 토크 크기. 전압으로 구동하는 DC 모터는
+    τ ∈ [−τ_s − kω, τ_s − kω] (k = τ_s/ω_무부하): 모터가 일을 할 때(τ·ω > 0)는 빠를수록 줄고, 브레이크(τ·ω < 0)는 늘어난다."""
     if model == "datasheet":
-        return SERVO["stall"] * np.clip(1 - w / SERVO["noload"], 0, None)
-    return np.clip(OPEN_DUCK_MODEL["max"] - OPEN_DUCK_MODEL["damping"] * w, 0, None)
+        stall, k = SERVO["stall"], SERVO["stall"] / SERVO["noload"]
+    else:
+        stall, k = OPEN_DUCK_MODEL["max"], OPEN_DUCK_MODEL["damping"]
+    return np.clip(stall - k * np.sign(tau) * vel, 0, None)
 
 
 # ---------------------------------------------------------------------------- 1부: 예상
@@ -181,8 +183,10 @@ def measure(runner, policy, seconds=10.0):
     mu = float(m.geom_friction[min(box), 0])
     taus, vels, ratios, coms, rolls, force = [], [], [], [], [], np.zeros(6)
 
-    def record(d):
-        taus.append(d.actuator_force[act].copy())
+    damping = m.dof_damping[info["qvel_idx"]]
+
+    def record(d):   # 물리 스텝 직전: 모터가 내는 토크 = 명령 토크(토크 한계로 자른 PD) − 관절 damping(역기전력 모델) × 속도
+        taus.append(d.ctrl[act] - damping * d.qvel[info["qvel_idx"]])
         vels.append(d.qvel[info["qvel_idx"]].copy())
         for i in range(d.ncon):                                   # 발-바닥 접촉: 쓰는 마찰 = 수평력 / 수직력
             c = d.contact[i]
@@ -215,7 +219,7 @@ def measure(runner, policy, seconds=10.0):
                      "peak_speed": float(np.abs(w).max()),
                      "over_rated_pct": float(100 * np.mean(np.abs(t) > SERVO["rated"])),
                      "over_datasheet_pct": float(100 * np.mean(np.abs(t) > available_torque(t, w, "datasheet"))),
-                     "over_open_duck_pct": float(100 * np.mean(np.abs(t) > available_torque(t, w, "open_duck") - 1e-3))}
+                     "over_open_duck_pct": float(100 * np.mean(np.abs(t) > available_torque(t, w, "open_duck") + 1e-3))}
     # 무게중심 좌우 흔들림: 걸음 한 주기 이동평균을 빼서 천천히 옆으로 흘러가는 것(drift)은 제외
     win = max(1, round(sp.gait_period / runner.W.CONTROL_DT))
     y = coms[:, 1] - np.convolve(coms[:, 1], np.ones(win) / win, mode="same")
@@ -230,14 +234,14 @@ def measure(runner, policy, seconds=10.0):
 
 
 # ---------------------------------------------------------------------------- 출력
-def report(p, meas, gait):
+def report(p, meas, gait, sim):
     s, sp, lp = p["slope"], p["speed"], p["lipm"]
     print(f"\n[로봇] 질량 {p['mass_kg']:.2f} kg, 무게중심 높이 {100 * p['com_height_m']:.1f} cm, 다리 길이(home) "
           f"{100 * p['leg_length_m']:.1f} cm, 발 {100 * p['foot_length_m']:.1f} × {100 * p['foot_width_m']:.1f} cm, "
           f"두 발 간격 {100 * p['stance_width_m']:.1f} cm")
     print(f"[서보] STS3215 7.4 V 데이터시트: 정지 {SERVO['stall']} N·m, 정격 {SERVO['rated']} N·m, 무부하 "
           f"{SERVO['noload']}~{SERVO['noload_max']} rad/s / Open Duck 모델: {OPEN_DUCK_MODEL['max']} N·m − "
-          f"{OPEN_DUCK_MODEL['damping']}·ω / 이 시뮬레이션: {OPEN_DUCK_MODEL['max']} N·m, 관절 damping 0")
+          f"{OPEN_DUCK_MODEL['damping']}·ω / 이 시뮬레이션({sim['servo']}): {sim['max']:.2f} N·m, 관절 damping {sim['damping']:.2f}")
 
     print("\n1) 한 발로 설 때 정적 토크 (home 자세, 무게중심이 두 발 가운데 그대로 = 가장 나쁜 경우)")
     for j, t in p["static_torque_Nm"].items():
@@ -311,10 +315,13 @@ def main():
     parser.add_argument("--difficulty", type=float, default=1.0, help="측정할 지형의 험한 정도")
     parser.add_argument("--seed", type=int, default=0, help="측정할 지형의 seed")
     parser.add_argument("--out", type=Path, default=None, help="결과 폴더 (기본 output/feasibility/<실행 이름>_<체크포인트>)")
+    parser.add_argument("--servo", default=None, help="서보 모델을 바꿔 측정 (기본: 학습 때와 같음). ideal / open_duck")
     args = parser.parse_args()
 
     params = args.params.resolve()
     policy, config = load_policy(params)
+    if args.servo:
+        config = {**config, "servo": args.servo}
     if get_spec(config).name != "open_duck_mini":
         raise SystemExit("이 분석은 오리 로봇(open_duck_mini) 정책용입니다 (관절·발 이름이 오리 기준)")
     flat = make_runner(config)
@@ -324,10 +331,13 @@ def main():
     for kind in ("hills", "obstacles"):
         rough = make_runner(config, terrain=make_terrain(kind, seed=args.seed, difficulty=args.difficulty))
         meas[f"{kind} {args.difficulty:g}"] = measure(rough, policy)
-    report(p, meas, gait)
+    sim = {"servo": flat.spec.servo, "max": float(flat.model.actuator_ctrlrange[0, 1]),
+           "damping": float(flat.model.dof_damping[flat.info["qvel_idx"][0]])}
+    report(p, meas, gait, sim)
 
     run = params.parent.parent.name if params.parent.name == "checkpoints" else params.parent.name
-    out = (args.out or paths.OUTPUT_DIR / "feasibility" / f"{run}_{params.stem}").resolve()
+    suffix = f"_{args.servo}" if args.servo else ""
+    out = (args.out or paths.OUTPUT_DIR / "feasibility" / f"{run}_{params.stem}{suffix}").resolve()
     out.mkdir(parents=True, exist_ok=True)
     plot(meas, flat.info["joint_names"], out / "torque_speed.png")
     for mm in meas.values():
