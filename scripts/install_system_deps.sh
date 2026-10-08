@@ -28,6 +28,7 @@ EXTRA_PACKAGES=(
     ros-dev-tools                         # colcon 등 ROS 빌드 도구
     ros-humble-joint-state-publisher-gui  # RViz에서 관절 슬라이더 (display.launch.py)
     ros-humble-xacro                      # URDF 매크로 도구 (실제 로봇 URDF에서 자주 씀)
+    ffmpeg                                # 걸음 영상(mp4) 저장 (learning/analyze_gait.py)
 )
 
 info() { echo -e "\033[1;34m[deps]\033[0m $*"; }

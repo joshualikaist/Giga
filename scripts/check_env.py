@@ -79,7 +79,6 @@ def check_mujoco():
 
 def check_project():
     try:
-        import mujoco
         from biped_sim import SIMPLE_BIPED, SimConfig, build_robot_model, paths
     except ImportError as e:
         return report("FAIL", "biped_sim import 실패", f"{e} → pip install -e .")

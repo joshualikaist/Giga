@@ -65,6 +65,8 @@ class ScalarLog:
 
 
 def make_figure(title: str, xlabel: str = "", yformat: str = "%.1f") -> mujoco.MjvFigure:
+    """그래프 하나. 제목은 여기서 한 번만 정한다: 실행 중에 더 짧은 제목으로 바꾸면 뷰어 화면에
+    이전 제목의 끝부분이 남아 보인다 (MuJoCo 3.15 실측)."""
     fig = mujoco.MjvFigure()
     mujoco.mjv_defaultFigure(fig)
     fig.title = title
@@ -120,20 +122,18 @@ class Dashboard:
         self.mode = mode
         self.reloads = 0
         self.gait = deque(maxlen=round(GAIT_WINDOW_S / W.CONTROL_DT))   # (t, 왼발 접촉, 오른발 접촉)
-        self.measured: list[tuple[float, float, float, float]] = []     # 이 창에서 잰 걸음 (스텝[백만], 공중, 한 발, 양발 %)
         self.set_policy(config, run_dir, reloaded=False)
         self.figs = {name: make_figure(title, xlabel, yfmt) for name, title, xlabel, yfmt in [
             ("reward", "Episode reward (eval)", "million steps", "%.0f"),
             ("speed", "Forward speed [m/s]", "million steps", "%.2f"),
-            ("terms", "Reward terms (sum per episode)", "million steps", "%.0f"),
-            ("gait_hist", "Gait over training [%]", "million steps", "%.0f"),
-            ("gait", "Foot contact", "", "%.0f"),
+            ("terms", "Reward terms (sum per episode, top 6)", "million steps", "%.0f"),
+            ("gait_hist", "Gait over training [% of time]", "million steps", "%.0f"),
+            ("gait", "Feet: L(blue) top, R(red) bottom", "", "%.0f"),   # 칸 너비를 넘는 제목은 잘림
         ]}
         gait = self.figs["gait"]
         gait.xformat = "%.1f"
         gait.flg_ticklabel = (1, 0)   # y축 숫자는 의미 없음 (위 = 왼발, 아래 = 오른발)
         gait.flg_legend = 0           # 칸이 낮아 범례가 한 줄만 보임 → 색 설명은 제목에
-        gait.title = "Feet: L(blue) top, R(red) bottom"   # 칸 너비를 넘는 제목은 잘림
         self._last_log = 0.0
         self._k = 0
         self.recent = (0.0, 0.0)   # 최근 4초: 두 발 공중 %, 한 발 %
@@ -155,28 +155,23 @@ class Dashboard:
             self.reloads += 1
         if run_dir is None or getattr(self, "log", None) is None or self.log.run_dir != Path(run_dir):
             self.log = ScalarLog(run_dir)   # 학습 실행(폴더)이 바뀌면 처음부터 다시 읽음
-            self.measured = []
             self._last_log = 0.0
 
     def start_episode(self) -> None:
         self.gait.clear()
         self._k = 0
 
-    def end_episode(self, result: dict) -> None:
-        if self.step is not None:
-            self.measured.append((self.step / 1e6, 100 * result["flight"], 100 * result["single"],
-                                  100 * result["double"]))
-
-    def on_step(self, viewer, state: dict, t: float, distance: float) -> None:
-        """run_episode가 제어 스텝마다 호출."""
+    def on_step(self, viewer, state: dict) -> None:
+        """walk_tools.run_episode가 제어 스텝마다 호출. state = {t, vx, distance, foot_z}"""
         contact = state["foot_z"] < self.W.FOOT_CONTACT_Z
-        self.gait.append((t, bool(contact[0]), bool(contact[1])))
+        self.gait.append((state["t"], bool(contact[0]), bool(contact[1])))
         self._k += 1
         if self._k % DRAW_EVERY == 0:
-            self.draw(viewer, state, t, distance, contact)
+            self.draw(viewer, state, contact)
 
     # ------------------------------------------------------------------ 그리기
-    def draw(self, viewer, state, t, distance, contact) -> None:
+    def draw(self, viewer, state, contact) -> None:
+        t, distance = state["t"], state["distance"]
         now = time.monotonic()
         if now - self._last_log > LOG_REFRESH_S:
             self._last_log = now
@@ -262,8 +257,6 @@ class Dashboard:
         set_line(fig, 0, "", xs, ys, PALETTE[0])
         fig.linepnt[1:] = 0
         set_range(fig, x_range, [ys])
-        fig.title = "Episode reward"
-        fig.flg_legend = 0
 
         fig = self.figs["speed"]
         xs, ys = series("walk/forward_speed_mps")
@@ -274,7 +267,6 @@ class Dashboard:
         set_range(fig, x_range, [ys, [target]], y_min=0.0)
 
         # 보상 항목: 최근 값의 크기가 큰 6개만 (색은 항목마다 고정)
-        self.figs["terms"].title = "Reward terms (sum per episode, top 6)"
         fig = self.figs["terms"]
         names = list(self.W.REWARD_WEIGHTS)
         terms = [(n, series(f"eval/episode_reward/{n}")) for n in names if s.get(f"eval/episode_reward/{n}")]
@@ -286,17 +278,10 @@ class Dashboard:
         fig.linepnt[len(terms):] = 0
         set_range(fig, x_range, all_y)
 
-        # 걸음 방식의 변화: 학습 기록에 있으면 그것을(평가 128개 평균), 없으면(예전 학습) 이 창에서 잰 값
+        # 걸음 방식의 변화 (평가 128개 에피소드의 평균, train_walk_gpu.py가 walk/gait_*_pct로 기록)
         fig = self.figs["gait_hist"]
-        if s.get("walk/gait_flight_pct"):
-            fig.title = "Gait over training [% of time]"
-            lines = [(k, series(f"walk/gait_{k}_pct")) for k in ("flight", "single", "double")]
-        else:
-            fig.title = "Gait [%]  (measured in this window)"
-            m = np.array(self.measured).reshape(-1, 4)
-            lines = [(k, (m[:, 0], m[:, i + 1])) for i, k in enumerate(("flight", "single", "double"))]
         labels = {"flight": "both in air", "single": "one foot", "double": "both down"}
-        for i, (k, (xs, ys)) in enumerate(lines):
-            set_line(fig, i, labels[k], xs, ys, PALETTE[(3, 0, 2)[i]])
+        for i, k in enumerate(("flight", "single", "double")):
+            set_line(fig, i, labels[k], *series(f"walk/gait_{k}_pct"), PALETTE[(3, 0, 2)[i]])
         fig.linepnt[3:] = 0
         set_range(fig, x_range, [], y_min=0.0, y_max=100.0)

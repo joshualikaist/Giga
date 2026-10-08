@@ -18,12 +18,20 @@ GPU(MJX)를 위한 단순화 (CPU MuJoCo와 다른 점) — docs/08 §3
 """
 from __future__ import annotations
 
+import contextlib
+import io
+
 import jax
 import jax.numpy as jnp
 import mujoco
 import numpy as np
-from brax.envs.base import Env, State
-from mujoco import mjx
+
+# MJX는 처음 import될 때(Brax를 import해도 같이 됨) 선택 백엔드(NVIDIA Warp)가 없으면
+# "Failed to import warp ..."를 print한다 (오류 아님). 매번 나오는 이 안내만 숨긴다.
+# → 보행 학습 스크립트들은 Brax보다 이 모듈을 먼저 import한다.
+with contextlib.redirect_stdout(io.StringIO()):
+    from brax.envs.base import Env, State
+    from mujoco import mjx
 
 from ..builder import FREEJOINT_NAME, SimConfig, build_robot_spec
 from ..robot_configs import SIMPLE_BIPED

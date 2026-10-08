@@ -302,7 +302,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │
 ├── scripts/                      ── 환경/도구
 │   ├── install_system_deps.sh    ← [1회, sudo] ROS2 Humble 등 apt 패키지 설치 (--dry-run으로 미리 보기)
-│   ├── setup_learning.sh         ← [선택, 1회] PyTorch(GPU/CPU 자동) + 강화학습 패키지 설치
+│   ├── setup_learning.sh         ← [선택, 1회] PyTorch(CPU판, --gpu로 GPU판) + 강화학습 패키지 설치
 │   ├── setup_gpu_learning.sh     ← [선택, 1회] GPU 학습 환경 .venv-mjx 설치 (JAX, MJX, Brax)
 │   ├── activate_gpu.sh           ← [GPU 학습 터미널마다] source: .venv-mjx 켜기
 │   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
@@ -359,13 +359,14 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_ros_sim_node.py      ← sim_node 통합: 주기, 명령, 초기화, IMU·TF, 정상 종료
 │   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
 │   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
-│   └── test_walk_mjx.py          ← GPU 보행 환경, 일반 MuJoCo와 관측 일치 (.venv-mjx에서만 실행)
+│   └── test_walk_mjx.py          ← GPU 보행 환경·관측 일치·학습 화면·걸음 분석·미리 학습된 걸음 (.venv-mjx에서만)
 │
-├── learning/                     ── 강화학습 예제 (docs/07)
+├── learning/                     ── 강화학습 예제 (CPU: docs/07, GPU 보행: docs/08)
 │   ├── train_balance.py          ← PPO 학습 → output/learning/ (모델, 기록, 학습 곡선, 비교표)
 │   ├── evaluate_balance.py       ← 비교표, MuJoCo 화면 재생 (--view, --baseline, --pretrained)
 │   ├── train_walk_gpu.py         ← GPU 보행 학습 (Brax PPO), TensorBoard, 보상 바꾸기(--reward), 학습 화면(--watch)
-│   ├── play_walk.py              ← 보행 정책 학습 화면(--live)·재생(--view)·걸음 분석
+│   ├── play_walk.py              ← 보행 정책 학습 화면(--live)·재생(--view)
+│   ├── walk_tools.py             ← 보행 공용 도구: 정책 불러오기, 재생기, 에피소드 기록, 걸음 수치
 │   ├── live_dashboard.py         ← MuJoCo 창 안의 학습 그래프·발 접촉 그래프 (Enter로 화면 전환)
 │   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
 │   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),

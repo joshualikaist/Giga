@@ -395,7 +395,7 @@ python learning/analyze_gait.py --params learning/pretrained/walk_policy.pkl
 | 이어서 학습했는데 처음 평가부터 점수가 다름 | 정상. 보상을 바꿨으므로 같은 걸음이라도 점수가 다름. 처음 평가의 버틴 시간·속도가 이전과 같으면 제대로 이어진 것 |
 | `analyze_gait.py --run`: 체크포인트가 없습니다 | 체크포인트 저장 기능 이전에 학습한 실행. `--params`로 `params.pkl`을 하나씩 분석 |
 | 학습 화면 창이 안 열림 (`--watch`) | `<실행 폴더>/watch.log`에 오류가 있음. 화면이 없는 서버라면 `--watch` 없이 학습 |
-| `Failed to import warp` | MJX의 다른 선택 백엔드(NVIDIA Warp)가 없다는 안내. 무시 |
+| `Failed to import warp` (설치 확인 중) | MJX의 선택 백엔드(NVIDIA Warp)가 없다는 안내. 무시 (학습·재생 스크립트에서는 숨김) |
 | 학습이 이상하게 느림 | **다른 프로그램이 GPU를 쓰고 있는지** `nvidia-smi` 확인. 화면 주기 제한이 없는 3D 창은 GTX 1650을 96 %까지 씀 (실측). 이 저장소의 MuJoCo 창은 `__GL_SYNC_TO_VBLANK=1`로 제한해 두었지만, RViz 등 다른 3D 창은 학습 중에 닫을 것 |
 | `RESOURCE_EXHAUSTED` / 메모리 부족 | `--envs 512`로 줄이거나, `XLA_PYTHON_CLIENT_MEM_FRACTION` 낮추기 (activate_gpu.sh 기본 0.7) |
 | `NotImplementedError: ... collisions not implemented` | MJX가 지원하지 않는 충돌 조합. 새 로봇 모델에서는 발 외 충돌을 끄거나 capsule/box로 바꿀 것 |
@@ -406,7 +406,8 @@ python learning/analyze_gait.py --params learning/pretrained/walk_policy.pkl
 |---|---|
 | `biped_sim/envs/walk_mjx.py` | GPU 보행 환경 (관측·행동·보상·넘어짐), 학습용 모델 생성 |
 | `learning/train_walk_gpu.py` | Brax PPO 학습, TensorBoard 기록, 평가마다 정책 저장(`checkpoints/`) (`--steps`, `--envs`, `--speed`, `--reward`, `--name`, `--watch`, `--init-from`) |
-| `learning/play_walk.py` | 학습 화면(`--live`), 재생(`--view`), 걸음 분석, 일반 MuJoCo(기본) 또는 MJX(`--backend mjx`) |
+| `learning/play_walk.py` | 학습 화면(`--live`), 재생(`--view`), 화면 없이 걸음 요약, 일반 MuJoCo(기본) 또는 MJX(`--backend mjx`) |
+| `learning/walk_tools.py` | 공용 도구: 정책 불러오기, 일반 MuJoCo/MJX 재생기, 한 에피소드 기록, 걸음 수치(절뚝임 점수) |
 | `learning/live_dashboard.py` | MuJoCo 창 안의 학습 그래프·발 접촉 그래프, TensorBoard 기록 파일 읽기, Enter 전환 |
 | `learning/analyze_gait.py` | 걸음 분석: 영상, 연속 사진, 관절 그래프, 좌우 대칭 수치(절뚝임 점수), 체크포인트 비교(`--run`) |
 | `requirements-gpu.txt`, `scripts/setup_gpu_learning.sh`, `scripts/activate_gpu.sh` | GPU 학습 환경 |

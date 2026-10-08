@@ -23,4 +23,8 @@ testpaths = ["tests"]
 # 나머지 테스트 수집까지 망가뜨린다 (ROS2 Humble, 2026-10-08 확인). 우리 테스트는 이 플러그인을 쓰지 않음.
 addopts = "-p no:launch_ros -p no:launch_testing"   # launch_ros는 launch_testing에 의존해서 함께 끔
 # Gymnasium이 관측 범위를 무한대로 둔 것에 대해 내는 일반 안내 (문제 아님)
-filterwarnings = ["ignore:.*Box observation space (minimum|maximum) value.*:UserWarning"]
+filterwarnings = [
+    "ignore:.*Box observation space (minimum|maximum) value.*:UserWarning",
+    # Brax가 쓰는 JAXopt의 '더 이상 관리되지 않음' 안내 (GPU 학습 환경, 우리 코드와 무관)
+    "ignore:JAXopt is no longer maintained:DeprecationWarning",
+]

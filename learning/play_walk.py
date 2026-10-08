@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""GPU로 학습한 보행 정책 재생·분석
+"""GPU로 학습한 보행 정책을 MuJoCo 화면으로 보기
 
 실행 (GPU 학습 환경에서: source scripts/activate_gpu.sh)
-    python learning/play_walk.py                     # 10초 걸어 보고 걸음 분석 (화면 없음)
-    python learning/play_walk.py --view              # MuJoCo 화면으로 반복 재생 (넘어지거나 10초가 지나면 다시 시작)
+    python learning/play_walk.py --view              # 최근 학습 정책을 반복 재생 (넘어지거나 10초가 지나면 다시 시작)
     python learning/play_walk.py --live              # 학습 화면: 학습 중인 최신 정책을 계속 불러와 재생 + 학습 그래프
-    python learning/play_walk.py --backend mjx       # 학습 때와 똑같은 GPU 시뮬레이터(MJX)로 재생
-    python learning/play_walk.py --params output/learning/walk_<날짜_시각>/params.pkl   # 특정 정책
+    python learning/play_walk.py --view --params learning/pretrained/walk_policy.pkl   # 다듬어 둔 걸음
+    python learning/play_walk.py --view --backend mjx   # 학습 때와 똑같은 GPU 시뮬레이터(MJX)로 재생
+    python learning/play_walk.py                     # 화면 없이 10초 걸어 보고 요약만 (자세한 분석: analyze_gait.py)
 
-화면에서 Enter 키: [학습 현황](그래프 6개 + 가운데 로봇) ↔ [로봇 보기](로봇 크게 + 발 접촉 그래프)
+화면에서 Enter 키: [학습 현황](그래프 + 가운데 로봇) ↔ [로봇 보기](로봇 크게 + 발 접촉 그래프)
     --live는 학습 현황, --view는 로봇 보기로 시작. 그래프는 learning/live_dashboard.py
 
 기본(--backend mujoco)은 일반 MuJoCo — ROS2 sim_node와 같은 시뮬레이터 — 로 돌린다.
@@ -17,178 +17,13 @@ GPU(MJX)에서 배운 걸음이 다른 시뮬레이터에서도 통하는지(sim
 """
 import argparse
 import json
-import os
 import time
 from pathlib import Path
 
-os.environ.setdefault("JAX_PLATFORMS", "cpu")  # 정책 계산은 아주 작아서 CPU로 충분 (학습 중인 GPU와 겹치지 않게)
+from walk_tools import (LATEST, MjxRunner, MujocoRunner, find_run_dir, gait_metrics, load_policy, run_episode,
+                        summary_lines)
 
-import numpy as np  # noqa: E402
-
-from biped_sim import paths, passive_viewer, track_body_camera  # noqa: E402
-
-LATEST = paths.OUTPUT_DIR / "learning" / "walk_latest.pkl"
-EPISODE_SECONDS = 10.0
-
-
-def load_policy(params_path: Path):
-    import jax
-    from brax.io import model as brax_model
-    from brax.training.acme import running_statistics
-    from brax.training.agents.ppo import networks as ppo_networks
-
-    from biped_sim.envs import walk_mjx
-
-    if params_path.name == "params.pkl":                  # 학습 실행 폴더의 최신 정책
-        config_path = params_path.with_name("config.json")
-    elif params_path.parent.name == "checkpoints":        # 실행 폴더/checkpoints/step_<스텝>.pkl
-        config_path = params_path.parent.parent / "config.json"
-    else:                                                 # walk_latest.pkl → walk_latest.json
-        config_path = params_path.with_suffix(".json")
-    config = json.loads(config_path.read_text())
-    if params_path.parent.name == "checkpoints":          # 설정 파일의 saved_step은 마지막 저장 기준 → 파일 이름의 스텝으로
-        config["saved_step"] = int(params_path.stem.split("_")[-1])
-    networks = ppo_networks.make_ppo_networks(
-        walk_mjx.OBS_SIZE, walk_mjx.ACTION_SIZE,
-        preprocess_observations_fn=running_statistics.normalize,   # 학습 때 normalize_observations=True
-        policy_hidden_layer_sizes=tuple(config["policy_hidden"]),
-        value_hidden_layer_sizes=tuple(config["value_hidden"]))
-    inference = ppo_networks.make_inference_fn(networks)(brax_model.load_params(str(params_path)),
-                                                          deterministic=True)
-    inference = jax.jit(inference)
-    key = jax.random.PRNGKey(0)
-    return (lambda obs: np.asarray(inference(obs, key)[0])), config
-
-
-class MujocoRunner:
-    """일반 MuJoCo(C)로 학습 환경과 똑같은 규칙(관측·PD·제어 주기)을 재현."""
-
-    def __init__(self, target_speed):
-        import mujoco
-
-        from biped_sim.envs import walk_mjx as W
-        self.W, self.mujoco = W, mujoco
-        self.model, info = W.build_mjx_model()
-        self.data = mujoco.MjData(self.model)
-        self.info = info
-        self.target_speed = target_speed
-        self.n_substeps = round(W.CONTROL_DT / W.PHYSICS_DT)
-
-    def reset(self):
-        self.mujoco.mj_resetData(self.model, self.data)
-        self.data.qpos[:] = self.info["home_qpos"]
-        self.mujoco.mj_forward(self.model, self.data)
-        self.t = 0.0
-        self.last_action = np.zeros(6)
-        return self.obs()
-
-    def step(self, action):
-        W, d, i = self.W, self.data, self.info
-        action = np.clip(action, -1, 1)
-        q_des = np.clip(i["q_home"] + W.ACTION_SCALE * action, i["q_range"][:, 0], i["q_range"][:, 1])
-        for _ in range(self.n_substeps):
-            q, dq = d.qpos[i["qpos_idx"]], d.qvel[i["qvel_idx"]]
-            d.ctrl[:] = np.clip(i["kp"] * (q_des - q) - i["kd"] * dq, i["tau_limit"][:, 0], i["tau_limit"][:, 1])
-            self.mujoco.mj_step(self.model, d)
-        self.t += W.CONTROL_DT
-        self.last_action = action
-        return self.obs()
-
-    def obs(self):
-        W, d, i = self.W, self.data, self.info
-        rot = d.xmat[i["base_body"]].reshape(3, 3)
-        phase = 2 * np.pi * self.t / W.GAIT_PERIOD
-        return np.concatenate([rot.T @ [0, 0, -1.0], d.qvel[3:6], rot.T @ d.qvel[0:3],
-                               [d.xpos[i["base_body"], 2] - W.NOMINAL_HEIGHT],
-                               d.qpos[i["qpos_idx"]] - i["q_home"], 0.1 * d.qvel[i["qvel_idx"]],
-                               self.last_action, [self.target_speed], [np.sin(phase), np.cos(phase)]]
-                              ).astype(np.float32)
-
-    def state(self):
-        i, d = self.info, self.data
-        rot = d.xmat[i["base_body"]].reshape(3, 3)
-        return {"pos": d.xpos[i["base_body"]].copy(), "vx": float(d.qvel[0]),
-                "tilt": float(np.arccos(np.clip(rot[2, 2], -1, 1))),
-                "yaw": float(np.arctan2(rot[1, 0], rot[0, 0])), "foot_z": d.xpos[i["foot_bodies"], 2].copy()}
-
-
-class MjxRunner(MujocoRunner):
-    """학습 때와 똑같은 MJX 환경으로 재생 (화면 표시용으로 MuJoCo 데이터에 복사)."""
-
-    def __init__(self, target_speed):
-        super().__init__(target_speed)
-        import jax
-        from mujoco import mjx
-        self.jax, self.mjx = jax, mjx
-        self.env = self.W.BipedWalkMjxEnv(target_speed=target_speed)
-        self._reset, self._step = jax.jit(self.env.reset), jax.jit(self.env.step)
-
-    def reset(self):
-        self.s = self._reset(self.jax.random.PRNGKey(0))
-        self._sync()
-        return np.asarray(self.s.obs)
-
-    def step(self, action):
-        self.s = self._step(self.s, action)
-        self._sync()
-        return np.asarray(self.s.obs)
-
-    def _sync(self):
-        self.mjx.get_data_into(self.data, self.model, self.s.pipeline_state)
-
-
-def run_episode(runner, policy, viewer=None, on_step=None):
-    """한 에피소드(최대 10 s) 실행하고 걸음 분석 결과를 돌려준다.
-    policy=None이면 행동 0 (= PD로 home 자세 유지, 첫 정책을 기다릴 때).
-    on_step(viewer, 상태, 시간, 이동 거리): 화면 모드에서 제어 스텝마다 호출 (그래프·글자 갱신용)"""
-    W = runner.W
-    obs = runner.reset()
-    start = runner.state()["pos"].copy()
-    log, fell = [], False
-    for k in range(round(EPISODE_SECONDS / W.CONTROL_DT)):
-        t0 = time.perf_counter()
-        obs = runner.step(policy(obs) if policy is not None else np.zeros(W.ACTION_SIZE, dtype=np.float32))
-        s = runner.state()
-        log.append(s)
-        if viewer is not None:
-            if not viewer.is_running():
-                break
-            if on_step is not None:
-                on_step(viewer, s, (k + 1) * W.CONTROL_DT, s["pos"][0] - start[0])
-            viewer.sync()
-            time.sleep(max(0.0, W.CONTROL_DT - (time.perf_counter() - t0)))
-        if s["tilt"] > W.FALL_TILT or s["pos"][2] < W.FALL_HEIGHT:
-            fell = True
-            break
-    contact = np.array([s["foot_z"] < W.FOOT_CONTACT_Z for s in log])        # (T, 2)
-    touchdowns = np.sum(contact[1:] & ~contact[:-1], axis=0)                  # 발이 다시 땅에 닿은 횟수
-    duration = len(log) * W.CONTROL_DT
-    end = log[-1]["pos"]
-    return {
-        "time": duration, "fell": fell,
-        "distance_x": float(end[0] - start[0]), "drift_y": float(end[1] - start[1]),
-        "speed": float(end[0] - start[0]) / max(duration, 1e-6), "yaw_deg": float(np.degrees(log[-1]["yaw"])),
-        "double": float(np.mean(contact.all(1))), "single": float(np.mean(contact.sum(1) == 1)),
-        "flight": float(np.mean(~contact.any(1))), "steps": touchdowns.tolist(),
-    }
-
-
-def report(r):
-    print(f"  {r['time']:4.1f} s 동안 {'넘어짐 ❌' if r['fell'] else '넘어지지 않음 ✅'} | 앞으로 {r['distance_x']:+.2f} m "
-          f"(평균 {r['speed']:+.2f} m/s), 옆으로 {r['drift_y']:+.2f} m, 방향 {r['yaw_deg']:+.0f}°")
-    print(f"  발 접촉: 양발 {r['double']*100:3.0f}% / 한 발 {r['single']*100:3.0f}% / 둘 다 공중 {r['flight']*100:3.0f}% "
-          f"| 발 딛은 횟수 왼발 {r['steps'][0]}회, 오른발 {r['steps'][1]}회")
-
-
-def find_run_dir(params_path: Path, config: dict) -> Path | None:
-    """정책 파일에 해당하는 학습 실행 폴더 (그래프용 TensorBoard 기록이 있는 곳)."""
-    if params_path.name == "params.pkl":
-        return params_path.parent
-    if config.get("run_dir"):
-        return Path(config["run_dir"])
-    # 예전 학습(설정에 run_dir 없음): 가장 최근에 기록된 walk 실행 폴더
-    events = sorted(params_path.parent.glob("walk*/events.out.tfevents.*"), key=lambda p: p.stat().st_mtime)
-    return events[-1].parent if events else None
+from biped_sim import passive_viewer, track_body_camera
 
 
 def main():
@@ -215,10 +50,12 @@ def main():
     else:
         raise SystemExit(f"정책이 없습니다: {args.params}\n→ 먼저 python learning/train_walk_gpu.py")
     runner = (MjxRunner if args.backend == "mjx" else MujocoRunner)(config["target_speed"])
+    joint_names = runner.info["joint_names"]
     print(f"정책: {args.params} | 목표 속도 {config['target_speed']} m/s | 시뮬레이터: {args.backend}")
 
     if not (args.view or args.live):
-        report(run_episode(runner, policy))
+        print("\n".join(summary_lines(gait_metrics(run_episode(runner, policy), joint_names))))
+        print("영상·그래프·좌우 비교: python learning/analyze_gait.py --params " + str(args.params))
         return
 
     from live_dashboard import Dashboard  # 같은 learning/ 폴더
@@ -248,9 +85,8 @@ def main():
                 episode += 1
                 print(f"[에피소드 {episode}]" + ("" if policy is not None else " (첫 정책 기다리는 중: 행동 0)"))
                 dash.start_episode()
-                result = run_episode(runner, policy, viewer, on_step=dash.on_step)
-                dash.end_episode(result)
-                report(result)
+                rec = run_episode(runner, policy, viewer, on_step=lambda state: dash.on_step(viewer, state))
+                print("\n".join(summary_lines(gait_metrics(rec, joint_names))))
                 time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nCtrl+C — 종료합니다.")

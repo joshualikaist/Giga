@@ -7,7 +7,7 @@
 
 | 하고 싶은 것 | 명령 | 걸리는 시간 |
 |---|---|---|
-| 학습 패키지 설치 (처음 한 번) | `bash scripts/setup_learning.sh` | 수 분 (GPU판 약 3 GB, CPU판 약 200 MB) |
+| 학습 패키지 설치 (처음 한 번) | `bash scripts/setup_learning.sh` | 수 분 (CPU판 PyTorch 약 200 MB) |
 | **학습 없이 바로 결과 보기** | `python learning/evaluate_balance.py --pretrained --view --push 40` | 바로 |
 | 직접 학습 | `python learning/train_balance.py` | CPU로 약 4분 |
 | 학습 결과 비교표 | `python learning/evaluate_balance.py` | 약 10초 |
@@ -77,7 +77,7 @@ t06에서 본 것처럼, 관절 PD 제어만으로는 몸통을 **20 N**으로 0
 
 ```bash
 cd ~/Giga && source scripts/activate.sh
-bash scripts/setup_learning.sh          # NVIDIA GPU가 있으면 GPU판, 없으면 CPU판 PyTorch 자동 선택
+bash scripts/setup_learning.sh          # CPU판 PyTorch (이 예제는 CPU가 더 빠름, §6). GPU판은 --gpu
 ```
 
 ✅ 확인: 마지막에 `torch 2.8.0+... | gymnasium 1.4.0 | stable-baselines3 2.9.0`, `numpy 1.26.4 | setuptools 59.6.0`

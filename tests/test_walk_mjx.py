@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 
 os.environ.setdefault("JAX_PLATFORMS", "cpu")
+LEARNING_DIR = Path(__file__).resolve().parents[1] / "learning"
+sys.path.insert(0, str(LEARNING_DIR))   # learning/의 스크립트 모듈(walk_tools, live_dashboard)을 import하려고
 
 try:
     import jax
@@ -51,8 +53,7 @@ def test_reset_and_standing_with_zero_action(env):
 
 def test_cpu_mujoco_runner_matches_mjx_observation(env):
     """learning/play_walk.py의 일반 MuJoCo 재생기가 학습 환경과 '같은 관측'을 만드는지 (sim-to-sim의 전제)."""
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "learning"))
-    from play_walk import MujocoRunner
+    from walk_tools import MujocoRunner
 
     runner = MujocoRunner(target_speed=env.target_speed)
     obs_cpu = runner.reset()
@@ -77,7 +78,6 @@ def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     import mujoco
     from tensorboardX import SummaryWriter
 
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "learning"))
     from live_dashboard import KEY_ENTER, Dashboard, ScalarLog
 
     writer = SummaryWriter(str(tmp_path))
@@ -106,9 +106,9 @@ def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     dash = Dashboard(walk_mjx, {"target_speed": 0.3, "steps": 3_000_000, "saved_step": 3_000_000}, tmp_path)
     dash.start_episode()
     for k in range(10):
-        dash.on_step(viewer, {"foot_z": np.array([0.02, 0.08]), "vx": 0.3}, (k + 1) * 0.02, 0.0)
+        dash.on_step(viewer, {"t": (k + 1) * 0.02, "vx": 0.3, "distance": 0.0, "foot_z": np.array([0.02, 0.08])})
     titles = [fig.title for _, fig in viewer.figs]
-    assert len(titles) == 5 and titles[0] == "Episode reward" and titles[4].startswith("Feet:")
+    assert len(titles) == 5 and titles[0] == "Episode reward (eval)" and titles[4].startswith("Feet:")
     reward_fig = viewer.figs[0][1]
     assert reward_fig.linepnt[0] == 4                       # 기록 4개가 선 하나로
     gait_hist = viewer.figs[3][1]
@@ -119,14 +119,13 @@ def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     dash.key_callback(KEY_ENTER)                            # 뷰어는 키를 뗄 때도 부름 → 무시되어야 함
     assert dash.mode == "robot"
     for k in range(10, 15):
-        dash.on_step(viewer, {"foot_z": np.array([0.02, 0.08]), "vx": 0.3}, (k + 1) * 0.02, 0.0)
+        dash.on_step(viewer, {"t": (k + 1) * 0.02, "vx": 0.3, "distance": 0.0, "foot_z": np.array([0.02, 0.08])})
     assert len(viewer.figs) == 1 and viewer.figs[0][1].title.startswith("Feet:")
 
 
-def test_analyze_gait_merges_taps_and_measures_asymmetry():
-    """learning/analyze_gait.py: 살짝 튕긴 착지는 걸음으로 세지 않고, 좌우 다리 차이는 반 박자 어긋나게 비교한다."""
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "learning"))
-    from analyze_gait import leg_asymmetry_deg, merge_taps
+def test_gait_metrics_merge_taps_and_measure_asymmetry():
+    """learning/walk_tools.py: 살짝 튕긴 착지는 걸음으로 세지 않고, 좌우 다리 차이는 반 박자 어긋나게 비교한다."""
+    from walk_tools import leg_asymmetry_deg, merge_taps
 
     # 발 높이: 땅(0.02) → 크게 들기(0.10, 걸음) → 땅 → 살짝 들기(0.025, 튕김) → 땅
     z = np.array([0.02] * 5 + [0.10] * 5 + [0.02] * 5 + [0.025] * 2 + [0.02] * 5)
@@ -148,15 +147,11 @@ def test_analyze_gait_merges_taps_and_measures_asymmetry():
 def test_pretrained_walk_policy_walks_symmetrically():
     """learning/pretrained/walk_policy.pkl (docs/08 §6의 결과): 일반 MuJoCo에서 10초 동안 넘어지지 않고
     목표 속도로, 절뚝이지 않고 걷는다."""
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "learning"))
-    from analyze_gait import gait_metrics, record
-    from play_walk import MujocoRunner, load_policy
+    from walk_tools import MujocoRunner, gait_metrics, load_policy, run_episode
 
-    path = os.path.join(os.path.dirname(__file__), "..", "learning", "pretrained", "walk_policy.pkl")
-    policy, config = load_policy(Path(path).resolve())
+    policy, config = load_policy(LEARNING_DIR / "pretrained" / "walk_policy.pkl")
     runner = MujocoRunner(config["target_speed"])
-    rec, _ = record(runner, policy, render=False)
-    m = gait_metrics(rec, runner.info["joint_names"], runner.W.CONTROL_DT)
+    m = gait_metrics(run_episode(runner, policy), runner.info["joint_names"])
     assert not m["fell"]
     assert m["speed_mps"] == pytest.approx(0.30, abs=0.03)
     assert m["both_air_pct"] < 5

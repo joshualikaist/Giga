@@ -21,10 +21,12 @@
     walk/gait_<flight|single|double>_pct : 걸음 방식 — 두 발 공중 / 한 발 / 두 발 땅 시간 비율 [%]
 
 결과 (output/learning/walk_<날짜_시각>/)
-    params.pkl   학습된 정책 (평가할 때마다 갱신 → 학습 중에도 화면으로 볼 수 있음)
-    config.json  학습 설정
-    events.*     TensorBoard 기록
-    → 화면으로 보기: python learning/play_walk.py --view
+    params.pkl     학습된 정책 (평가할 때마다 갱신 → 학습 중에도 화면으로 볼 수 있음)
+    checkpoints/   평가마다의 정책 step_<스텝>.pkl (중간 정책이 더 좋을 수 있음 → analyze_gait.py --run)
+    config.json    학습 설정 (보상 가중치 등)
+    events.*       TensorBoard 기록
+    watch.log      --watch 학습 화면의 출력
+    → 화면으로 보기: python learning/play_walk.py --view,  걸음 분석: python learning/analyze_gait.py --run <폴더>
 
 과제·보상 설명: biped_sim/envs/walk_mjx.py, docs/08_gpu_walking.md
 """
@@ -66,12 +68,11 @@ def main():
 
     try:
         import jax
+        from biped_sim.envs import walk_mjx   # Brax보다 먼저 (MJX import 안내 문구를 숨김)
         from brax.io import model as brax_model
         from brax.training.agents.ppo import networks as ppo_networks
         from brax.training.agents.ppo import train as ppo
         from tensorboardX import SummaryWriter
-
-        from biped_sim.envs import walk_mjx
     except ImportError as e:
         raise SystemExit(f"GPU 학습 환경이 아닙니다 ({e}) → bash scripts/setup_gpu_learning.sh 후 "
                          "source scripts/activate_gpu.sh")
@@ -82,9 +83,15 @@ def main():
     if args.init_from and not args.init_from.exists():
         raise SystemExit(f"--init-from 정책 파일이 없습니다: {args.init_from}")
     overrides = {}
-    for item in args.reward:
+    for item in args.reward:   # 결과 폴더를 만들기 전에 확인 (오타로 빈 폴더가 생기지 않게)
         name, _, value = item.partition("=")
-        overrides[name.strip()] = float(value)
+        try:
+            overrides[name.strip()] = float(value)
+        except ValueError:
+            raise SystemExit(f"--reward는 이름=가중치 형식입니다 (예: --reward symmetry=-2). 받은 값: {item}")
+    unknown = sorted(set(overrides) - set(walk_mjx.REWARD_WEIGHTS))
+    if unknown:
+        raise SystemExit(f"모르는 보상 항목 {unknown}. 사용 가능: {', '.join(walk_mjx.REWARD_WEIGHTS)}")
     run_dir = args.output_dir.resolve() / f"{args.name}_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True, exist_ok=True)
     latest = args.output_dir.resolve() / "walk_latest.pkl"
@@ -120,7 +127,7 @@ def main():
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()
-    episode_len = 500  # 10 s
+    episode_len = round(10.0 / walk_mjx.CONTROL_DT)   # 10 s = 500 제어 스텝
 
     def progress(step, metrics):
         for key, value in metrics.items():

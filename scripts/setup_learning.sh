@@ -3,11 +3,11 @@
 # setup_learning.sh — 강화학습 패키지 설치 (선택, 1회). PyTorch + Gymnasium + Stable-Baselines3
 #
 # 사용법:  source scripts/activate.sh   (먼저)
-#          bash scripts/setup_learning.sh          # NVIDIA GPU가 있으면 GPU판, 없으면 CPU판 PyTorch
-#          bash scripts/setup_learning.sh --cpu    # CPU판 강제 (내려받는 양 약 200 MB)
-#          bash scripts/setup_learning.sh --gpu    # GPU판 강제 (약 3 GB, NVIDIA 드라이버 필요)
+#          bash scripts/setup_learning.sh          # CPU판 PyTorch (내려받는 양 약 200 MB) — 권장
+#          bash scripts/setup_learning.sh --gpu    # GPU(CUDA)판 PyTorch (약 3 GB, NVIDIA 드라이버 필요)
 #
-# 학습 예제는 CPU만으로도 충분히 빠릅니다 (docs/07 §6 CPU vs GPU 실측 참고).
+# 이 환경의 학습 예제(밀기 버티기)는 CPU가 GPU보다 빠릅니다 (docs/07 §6 실측: CPU 228 s, GPU 284 s).
+# GPU로 빠르게 하는 보행 학습은 PyTorch가 아니라 별도 환경(JAX)을 씁니다 → scripts/setup_gpu_learning.sh
 # =============================================================================
 set -eo pipefail
 
@@ -19,16 +19,12 @@ fail() { echo -e "\033[1;31m[error]\033[0m $*"; exit 1; }
 
 [[ "${VIRTUAL_ENV:-}" == "${REPO_ROOT}/.venv" ]] || fail "먼저:  source scripts/activate.sh"
 
-MODE="auto"
+MODE="cpu"
 case "${1:-}" in
-    --cpu) MODE="cpu" ;;
+    --cpu|"") ;;
     --gpu) MODE="gpu" ;;
-    "") ;;
-    *) fail "알 수 없는 옵션: $1  (사용 가능: --cpu, --gpu)" ;;
+    *) fail "알 수 없는 옵션: $1  (사용 가능: --gpu)" ;;
 esac
-if [[ "${MODE}" == "auto" ]]; then
-    if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then MODE="gpu"; else MODE="cpu"; fi
-fi
 
 if [[ "${MODE}" == "gpu" ]]; then
     INDEX="https://download.pytorch.org/whl/cu126"
@@ -55,6 +51,6 @@ if torch.cuda.is_available():
     _ = (x @ x).sum().item()  # 실제로 GPU 계산이 되는지
     print(f"  GPU 사용 가능: {torch.cuda.get_device_name(0)}")
 else:
-    print("  GPU 없음 → CPU로 학습합니다 (이 예제는 CPU로 충분)")
+    print("  CPU판 PyTorch → CPU로 학습합니다 (이 예제는 CPU가 더 빠름)")
 EOF
 info "완료! 다음:  python learning/train_balance.py   (docs/07_learning.md 참고)"
