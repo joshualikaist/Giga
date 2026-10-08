@@ -17,10 +17,11 @@
     관절 각도 − home (6), 관절 속도 × 0.1 (6)
     직전 행동 (6)
 
-보상 (reward, 매 제어 스텝)
-    +1           살아 있음 (넘어지지 않음)
-    −2 × 기울기²  몸통이 기울수록 감점 [rad²]
-    −0.05 × |Δaction|²  행동이 급격히 바뀌면 감점 (떨림 방지)
+보상 (reward, 매 제어 스텝) = 아래 항목의 합. 가중치는 REWARD_WEIGHTS에서 바꿀 수 있음
+    alive        +1 × 1              살아 있음 (넘어지지 않음)
+    tilt         −2 × 기울기²         몸통이 기울수록 감점 [rad²]
+    action_rate  −0.05 × |Δaction|²  행동이 급격히 바뀌면 감점 (떨림 방지)
+    항목별 값은 info["reward_terms"]로 나오며, 학습 중 TensorBoard에 항목별 그래프로 기록된다 (docs/07 §4).
 넘어짐 판정 (에피소드 종료): 몸통 기울기 > 0.6 rad(약 34°) 또는 몸통 높이 < 0.40 m
 """
 from __future__ import annotations
@@ -42,6 +43,11 @@ NOMINAL_BASE_HEIGHT = 0.588  # [m] PD로 서 있을 때의 몸통 높이 (t06 �
 FALL_TILT = 0.6             # [rad]
 FALL_HEIGHT = 0.40          # [m]
 PUSH_DURATION = 0.1         # [s]
+REWARD_WEIGHTS = {          # 보상 항목별 가중치 (docs/07 §7 과제 3)
+    "alive": 1.0,
+    "tilt": -2.0,
+    "action_rate": -0.05,
+}
 
 
 class BipedBalanceEnv(gym.Env):
@@ -111,10 +117,17 @@ class BipedBalanceEnv(gym.Env):
         tilt = self.robot.base_tilt()
         height = self.robot.base_position()[2]
         fell = tilt > FALL_TILT or height < FALL_HEIGHT
-        reward = 1.0 - 2.0 * tilt**2 - 0.05 * float(np.sum((action - self.prev_action) ** 2))
+        terms = {
+            "alive": REWARD_WEIGHTS["alive"],
+            "tilt": REWARD_WEIGHTS["tilt"] * tilt**2,
+            "action_rate": REWARD_WEIGHTS["action_rate"] * float(np.sum((action - self.prev_action) ** 2)),
+        }
+        reward = sum(terms.values())
         self.prev_action = action
         truncated = self.steps >= self.max_steps
-        return self._observation(), reward, fell, truncated, self._info(fell)
+        info = self._info(fell)
+        info["reward_terms"] = terms
+        return self._observation(), reward, fell, truncated, info
 
     def render(self):
         if self.render_mode != "rgb_array":

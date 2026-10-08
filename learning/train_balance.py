@@ -7,9 +7,14 @@
     python learning/train_balance.py --steps 1000000  # 더 오래 학습
     python learning/train_balance.py --push-range 40 80   # 더 세게 밀며 학습
 
+학습 과정을 실시간 그래프로 (다른 터미널에서, source scripts/activate.sh 후)
+    tensorboard --logdir output/learning      → 웹 브라우저에서 http://localhost:6006
+    보상 항목별 값(reward_terms/), 버틴 시간(episode/), 세기별 시험 결과(eval/), PPO 내부 값(train/)
+
 결과 (output/learning/balance_<날짜_시각>/)
     model.zip           학습된 정책 (신경망)
     progress.csv        학습 기록 (스텝별 평균 보상, 에피소드 길이 등)
+    events.out.tfevents.*  TensorBoard 기록
     learning_curve.png  학습 곡선 그래프
     → 다음: python learning/evaluate_balance.py --view      (학습한 정책을 MuJoCo 화면으로 보기)
 
@@ -38,6 +43,8 @@ def main():
     parser.add_argument("--push-range", type=float, nargs=2, default=(20.0, 60.0), metavar=("MIN", "MAX"),
                         help="학습 중 미는 힘 범위 [N] (기본 20 60)")
     parser.add_argument("--output-dir", type=Path, default=RUNS_DIR, help="결과 저장 폴더")
+    parser.add_argument("--eval-every", type=int, default=50_000,
+                        help="이 스텝마다 30/40/50 N 시험을 해서 TensorBoard eval/에 기록 (0이면 안 함)")
     args = parser.parse_args()
 
     # 학습 패키지는 무겁고 선택 설치라 여기서 import (없으면 친절한 안내)
@@ -64,6 +71,7 @@ def main():
     print(f"과제: 몸통을 앞/뒤로 {lo:g}~{hi:g} N × 0.1초 밀 때 4초 동안 넘어지지 않기")
     print(f"학습: PPO, {args.steps:,} 스텝, 환경 {args.envs}개 병렬, 장치 {args.device}")
     print(f"저장: {run_dir}")
+    print(f"실시간 그래프: 다른 터미널에서  tensorboard --logdir {args.output_dir}  → http://localhost:6006")
     print("=" * 72)
 
     # ① 환경: 같은 시뮬레이션을 여러 개(프로세스) 동시에 돌려 경험을 빨리 모은다
@@ -76,7 +84,8 @@ def main():
                 gamma=0.99, gae_lambda=0.95,
                 policy_kwargs=dict(net_arch=[128, 128], log_std_init=-1.0),
                 device=args.device, seed=args.seed, verbose=0)
-    model.set_logger(configure(str(run_dir), ["csv"]))
+    # 기록: progress.csv + TensorBoard (rollout/, train/, time/ 은 PPO가, 나머지는 아래 콜백이 기록)
+    model.set_logger(configure(str(run_dir), ["csv", "tensorboard"]))
 
     # ③ 학습. 진행 상황을 한 줄씩 출력하는 콜백
     class Progress(BaseCallback):
@@ -97,8 +106,34 @@ def main():
                           f"경과 {time.perf_counter() - self.start:5.0f} s", flush=True)
             return True
 
+    # ④ TensorBoard용 기록 콜백: 에피소드가 끝날 때마다 보상 항목별 합계 등을 모아, PPO가 매 롤아웃 끝에 기록
+    class RewardTermsLogger(BaseCallback):
+        def __init__(self):
+            super().__init__()
+            self.sums = [dict() for _ in range(args.envs)]
+            self.next_eval = args.eval_every
+
+        def _on_step(self):
+            for i, (info, done) in enumerate(zip(self.locals["infos"], self.locals["dones"])):
+                for name, value in info.get("reward_terms", {}).items():
+                    self.sums[i][name] = self.sums[i].get(name, 0.0) + value
+                if done:
+                    # 에피소드 전체 동안 각 보상 항목이 얼마나 쌓였나 (어떤 항목이 점수를 좌우하는지 보임)
+                    for name, total in self.sums[i].items():
+                        self.logger.record_mean(f"reward_terms/{name}", total)
+                    self.logger.record_mean("episode/survival_time_s", info["time"])
+                    self.logger.record_mean("episode/fell", float(info["fell"]))
+                    self.sums[i] = {}
+            if args.eval_every and self.num_timesteps >= self.next_eval:
+                self.next_eval += args.eval_every
+                policy = lambda obs: self.model.predict(obs, deterministic=True)[0]  # noqa: E731
+                results = evaluate_push_recovery(policy, forces=(30, 40, 50), push_times=(1.0,))
+                for force, (ok, n) in results.items():
+                    self.logger.record(f"eval/survive_{force}N", ok / n)
+            return True
+
     t0 = time.perf_counter()
-    model.learn(total_timesteps=args.steps, callback=Progress())
+    model.learn(total_timesteps=args.steps, callback=[Progress(), RewardTermsLogger()])
     elapsed = time.perf_counter() - t0
     venv.close()
 
@@ -110,7 +145,7 @@ def main():
     plot = save_learning_curve(run_dir, args.push_range)
     print(f"학습 곡선: {plot}")
 
-    # ④ 평가: 같은 조건(앞/뒤 × 미는 시각 3가지)으로 학습 전(PD만)과 비교
+    # ⑤ 평가: 같은 조건(앞/뒤 × 미는 시각 3가지)으로 학습 전(PD만)과 비교
     print("\n평가 (세기마다 앞/뒤 × 미는 시각 3가지 = 6번 시도)")
     trained = evaluate_push_recovery(lambda obs: model.predict(obs, deterministic=True)[0])
     print(format_results(evaluate_push_recovery(zero_policy), trained))

@@ -1,5 +1,6 @@
 # Python 가상환경 (scripts/setup_env.sh가 생성)
 .venv/
+.venv-mjx/
 
 # 시뮬레이션 생성물 (내보낸 MJCF, 그래프, 스냅샷)
 output/

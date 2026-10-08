@@ -166,7 +166,7 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `24 passed, 5 skipped` (5개는 9단계의 학습 패키지를 설치하면 실행되는 테스트 → 설치 후에는 `29 passed`)
+✅ 확인: 마지막 줄에 `24 passed, 8 skipped`. 건너뛴 8개 중 5개는 9단계의 학습 패키지를 설치하면 실행되고(→ `29 passed, 3 skipped`), 3개는 10단계의 GPU 학습 환경에서 따로 실행합니다 (`source scripts/activate_gpu.sh && pytest tests/test_walk_mjx.py`).
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
 
@@ -193,6 +193,62 @@ python learning/train_balance.py                                     # 직접 �
 
 강화학습 개념, 과제 설계, 결과 해석, CPU vs GPU 실측, 직접 해 볼 과제 → **[docs/07 강화학습 첫 예제](docs/07_learning.md)**
 
+#### 학습 그래프 보기 (TensorBoard)
+
+TensorBoard는 학습 기록(`output/learning/` 안의 파일)을 그래프로 보여 주는 프로그램입니다.
+인터넷 사이트가 아니라 **내 컴퓨터에서 직접 켜는 웹페이지**입니다. 켜 두면 학습 중에도 그래프가 계속 갱신됩니다.
+
+```bash
+# 새 터미널을 열고
+cd ~/Giga
+source scripts/activate.sh
+tensorboard --logdir output/learning
+# → "TensorBoard 2.21.0 at http://localhost:6006/" 가 나오면 성공. 이 터미널은 닫지 말고 그대로 둡니다.
+```
+
+1. 같은 컴퓨터의 웹 브라우저(Chrome, Firefox 등) 주소창에 **http://localhost:6006** 을 입력합니다.
+2. 위쪽 **SCALARS** 탭에 그래프가 나옵니다. 왼쪽 **Runs**에서 보고 싶은 학습(`balance_…`, `walk_…`)에 체크합니다.
+3. 위쪽 검색칸에 `reward` 를 입력하면 보상 그래프만 모아서 볼 수 있습니다.
+4. 그래프는 30초마다 자동으로 새로 고쳐집니다 (오른쪽 위 ⟳ 버튼으로 바로 새로 고칠 수도 있음).
+5. 끄려면 TensorBoard 터미널에서 `Ctrl+C`를 누릅니다.
+
+이 예제(밀기 버티기)에서는 보상 항목별 값(`reward_terms/`), 버틴 시간(`episode/`), 세기별 시험 결과(`eval/`)가 그래프로 나옵니다.
+학습 시작 전에 켜 두어도 되고, 학습 중이나 끝난 뒤에 켜도 같은 그래프가 나옵니다.
+
+### 10단계. (선택, NVIDIA GPU 필요) GPU로 보행 학습
+
+시뮬레이션 자체를 GPU에서 1024개 동시에 돌려(MuJoCo MJX + Brax PPO) **걷기**를 학습합니다. CPU 학습보다 약 13배 빠릅니다.
+ROS2 환경과 섞이지 않도록 **별도 가상환경(`.venv-mjx`)** 을 씁니다.
+
+```bash
+bash scripts/setup_gpu_learning.sh            # GPU 학습 환경 설치 (처음 한 번, 약 3 GB)
+source scripts/activate_gpu.sh                # ROS를 켜지 않은 새 터미널에서
+python learning/train_walk_gpu.py --watch     # 3,000만 스텝, 약 20분 (처음 3~4분은 컴파일) + 학습 화면
+python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보기
+```
+
+`--watch`를 붙이면 **학습 화면**(MuJoCo 창)이 함께 열립니다. 창을 한 번 클릭한 뒤 **Enter 키**로 두 화면을 오갑니다.
+
+| 화면 | 보이는 것 |
+|---|---|
+| 학습 현황 (처음 화면) | 양옆에 학습 그래프 4개(보상, 속도, 보상 항목, 걸음 방식 변화), 가운데 위에 발 접촉 그래프, 그 아래에 지금까지 배운 정책으로 걷는 로봇 |
+| 로봇 보기 | 로봇을 크게, 아래에 발 접촉 그래프 |
+
+![학습 화면](docs/images/walk_live_graphs.png)
+
+- 로봇은 약 40초마다 새로 배운 정책으로 바뀝니다. 첫 정책이 나오기 전(3~4분)에는 제자리에 서 있습니다.
+- **발 접촉 그래프**에서 위쪽 선은 왼발, 아래쪽 선은 오른발이고, 높으면 그 발이 땅을 딛고 있습니다.
+  좌우가 번갈아 높으면 걷기이고, 둘이 함께 낮으면 두 발이 다 떠 있는 뛰기입니다.
+
+✅ 확인: 학습 출력에서 `버틴 시간 10.00 s / 10 s`, `앞으로 속도 +0.30 m/s`, `두 발 공중 0%` 근처가 되면 넘어지지 않고 목표 속도로 걷는 것입니다.
+더 자세한 그래프는 9단계의 TensorBoard(http://localhost:6006)에서 Runs의 `walk_…`를 고르면 됩니다.
+`walk/forward_speed_mps`(속도), `walk/gait_flight_pct`(두 발 공중 비율), `eval/episode_reward/<항목>`(보상 항목별)을 보세요.
+
+> 학습 화면은 학습과 별도 프로세스이고 GPU를 거의 쓰지 않게 설정되어 있습니다. 창을 닫아도 학습은 계속됩니다.
+> 이 저장소의 MuJoCo 화면은 모두 같은 설정을 쓰지만, 다른 프로그램의 3D 창은 GPU를 최대 96%까지 쓸 수 있으니 학습 중에는 닫아 두세요.
+
+과제 설계, 보상 항목, 결과 분석, 보상 바꿔 보기 → **[docs/08 GPU 보행 학습](docs/08_gpu_walking.md)**
+
 ### 막혔을 때
 
 | 증상 | 해결 |
@@ -213,6 +269,7 @@ python learning/train_balance.py                                     # 직접 �
 | [tutorials/README.md](tutorials/README.md) | MuJoCo 튜토리얼 t01~t06 (순서대로, 과제 포함) |
 | [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md) | ROS2 실행 가이드: 명령별로 무슨 일이 일어나는지 |
 | [docs/07_learning.md](docs/07_learning.md) | 강화학습 첫 예제: 개념, 실행, 결과 해석, CPU vs GPU |
+| [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, TensorBoard |
 | [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
 | [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
 
@@ -224,13 +281,16 @@ python learning/train_balance.py                                     # 직접 �
 Giga/                             (clone한 폴더 이름. 로컬에서 다른 이름이어도 무관)
 ├── README.md                     ← 지금 이 파일 (시작점)
 ├── requirements.txt              ← pip 의존성 (mujoco==3.15.0, numpy<2, -e .)
-├── requirements-learning.txt     ← (선택) 강화학습 패키지: stable-baselines3, gymnasium (torch는 setup_learning.sh가)
+├── requirements-learning.txt     ← (선택) 강화학습 패키지: stable-baselines3, gymnasium, tensorboard (torch는 setup_learning.sh가)
+├── requirements-gpu.txt          ← (선택) GPU 학습 환경(.venv-mjx): jax[cuda12], mujoco-mjx, brax
 ├── pyproject.toml                ← biped_sim 패키지 정의 (pip install -e . 로 어디서든 import 가능)
 ├── .gitignore
 │
 ├── scripts/                      ── 환경/도구
 │   ├── install_system_deps.sh    ← [1회, sudo] ROS2 Humble 등 apt 패키지 설치 (--dry-run으로 미리 보기)
 │   ├── setup_learning.sh         ← [선택, 1회] PyTorch(GPU/CPU 자동) + 강화학습 패키지 설치
+│   ├── setup_gpu_learning.sh     ← [선택, 1회] GPU 학습 환경 .venv-mjx 설치 (JAX, MJX, Brax)
+│   ├── activate_gpu.sh           ← [GPU 학습 터미널마다] source: .venv-mjx 켜기
 │   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
 │   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + ros2_ws + ROS_DOMAIN_ID=27
 │   ├── check_env.py              ← 환경 진단 (Python/numpy/mujoco/ROS2/GL)
@@ -245,7 +305,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 04_simple_biped_spec.md   ← 2족 모델 사양서 (치수·질량·관절·부호·게인 근거)
 │   ├── 05_ros2_bridge_plan.md    ← ROS2 연동 단계별 실행 계획 (사전 검증 결과, 인터페이스 명세, 결정 사항, 진행 상태)
 │   ├── 06_ros2_hands_on.md       ← ROS2 실행 가이드: 명령별로 일어나는 일 + 터미널 실습
-│   ├── 07_learning.md            ← 강화학습 첫 예제: 밀려도 넘어지지 않기 (PPO)
+│   ├── 07_learning.md            ← 강화학습 첫 예제: 밀려도 넘어지지 않기 (PPO), TensorBoard
+│   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계
 │   └── images/                   ← README의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
@@ -265,7 +326,9 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크)
 │   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), passive_viewer(안전한 뷰어 종료), 스냅샷, 카메라
 │   ├── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
-│   └── envs/balance.py           ← 강화학습 환경 BipedBalanceEnv (Gymnasium) + 평가 함수
+│   └── envs/                     ← 강화학습 환경
+│       ├── balance.py            ←   밀기 버티기 (Gymnasium, CPU) + 평가 함수
+│       └── walk_mjx.py           ←   보행 (Brax, GPU MJX) — .venv-mjx에서만
 │
 ├── tutorials/                    ── 학생용 실습 (순서대로)
 │   ├── README.md                 ← 각 튜토리얼의 관찰 포인트 + 과제
@@ -281,11 +344,15 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_tutorials_and_ros.py ← 튜토리얼 실행 + ROS2 robot_state_publisher URDF 파싱
 │   ├── test_ros_sim_node.py      ← sim_node 통합: 주기, 명령, 초기화, IMU·TF, 정상 종료
 │   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
-│   └── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
+│   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
+│   └── test_walk_mjx.py          ← GPU 보행 환경, 일반 MuJoCo와 관측 일치 (.venv-mjx에서만 실행)
 │
 ├── learning/                     ── 강화학습 예제 (docs/07)
 │   ├── train_balance.py          ← PPO 학습 → output/learning/ (모델, 기록, 학습 곡선, 비교표)
 │   ├── evaluate_balance.py       ← 비교표, MuJoCo 화면 재생 (--view, --baseline, --pretrained)
+│   ├── train_walk_gpu.py         ← GPU 보행 학습 (Brax PPO), TensorBoard, 보상 바꾸기(--reward), 학습 화면(--watch)
+│   ├── play_walk.py              ← 보행 정책 학습 화면(--live)·재생(--view)·걸음 분석
+│   ├── live_dashboard.py         ← MuJoCo 창 안의 학습 그래프·발 접촉 그래프 (Enter로 화면 전환)
 │   └── pretrained/balance_ppo.zip ← 미리 학습된 모델
 │
 ├── ros2_ws/                      ── ROS2 colcon 워크스페이스 (build/ install/ log/는 git 제외)
@@ -303,7 +370,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │
 ├── output/                       ── 생성물 (git 제외): 내보낸 MJCF, 그래프, 스냅샷
 ├── biped_sim.egg-info/           ── pip install -e . 가 자동 생성하는 메타데이터 (git 제외, 건드리지 않음)
-└── .venv/                        ── 가상환경 (git 제외, setup_env.sh가 생성)
+├── .venv/                        ── 가상환경 (git 제외, setup_env.sh가 생성)
+└── .venv-mjx/                    ── (선택) GPU 학습 가상환경 (git 제외, setup_gpu_learning.sh가 생성)
 ```
 
 ### 의존 관계

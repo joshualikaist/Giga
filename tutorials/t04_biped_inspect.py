@@ -18,6 +18,7 @@
     - 왼쪽 패널 "Rendering" > "Model Elements"의 Joint, Inertia 등도 켜 보세요.
 """
 import argparse
+import os
 
 import mujoco
 import numpy as np
@@ -106,6 +107,7 @@ def main():
         # launch()는 메인 스레드에서 화면 루프를 직접 돌려서, 파이썬이 Ctrl+C를 처리할 틈이 없다.
         # Ctrl+C를 운영체제 기본 동작(즉시 종료)으로 돌려 두면 터미널에서도 끌 수 있다.
         signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.environ.setdefault("__GL_SYNC_TO_VBLANK", "1")  # 화면 갱신을 모니터 주기로 제한 (GPU 과다 사용 방지)
         mj_viewer.launch(model, data)  # 창을 닫거나 Ctrl+C를 누를 때까지 반환하지 않음
         return
 

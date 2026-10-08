@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import os
 import threading
 import time
 from pathlib import Path
@@ -35,7 +36,8 @@ def add_common_args(parser: argparse.ArgumentParser, default_duration: float | N
 
 
 @contextlib.contextmanager
-def passive_viewer(model: mujoco.MjModel, data: mujoco.MjData) -> Iterator[object]:
+def passive_viewer(model: mujoco.MjModel, data: mujoco.MjData, show_ui: bool = True,
+                   key_callback: Callable[[int], None] | None = None) -> Iterator[object]:
     """mujoco.viewer.launch_passive를 안전하게 열고 닫는 with 블록.
 
         with passive_viewer(model, data) as viewer:
@@ -51,8 +53,15 @@ def passive_viewer(model: mujoco.MjModel, data: mujoco.MjData) -> Iterator[objec
     # (주의: 함수 안에서 `import mujoco.viewer`라고 쓰면 `mujoco`가 지역 변수가 되어 위쪽 코드가 깨짐)
     import mujoco.viewer as mj_viewer
 
+    # 화면 갱신을 모니터 주기(보통 60 Hz)에 맞춘다 (NVIDIA 드라이버 설정). 안 하면 뷰어가 쉬지 않고 다시 그려서
+    # GTX 1650 기준 GPU를 49~96 % 차지함 (실측) → GPU 학습이 느려짐. 켜면 측정되지 않을 만큼 줄어듦.
+    os.environ.setdefault("__GL_SYNC_TO_VBLANK", "1")
+
     before = set(threading.enumerate())
-    viewer = mj_viewer.launch_passive(model, data)
+    # show_ui=False: 왼쪽/오른쪽 설정 패널을 숨겨 로봇을 크게 (창에서 Tab / Shift+Tab으로 다시 켤 수 있음)
+    # key_callback(keycode): 창에서 키를 누를 때마다 화면 스레드에서 호출 (keycode는 GLFW 번호, 예: Enter = 257)
+    viewer = mj_viewer.launch_passive(model, data, key_callback=key_callback,
+                                      show_left_ui=show_ui, show_right_ui=show_ui)
     viewer_threads = [t for t in threading.enumerate() if t not in before]
     try:
         yield viewer

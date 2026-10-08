@@ -1,0 +1,16 @@
+# GPU 대량 병렬 학습 환경 (.venv-mjx, 선택). 설치: bash scripts/setup_gpu_learning.sh
+#
+# 시뮬레이션 자체를 GPU에서 수천 개 동시에 돌린다: MuJoCo MJX (JAX 기반) + Brax PPO.
+# ROS2 환경(.venv)과 분리한 이유: JAX/Brax가 끌어오는 패키지가 많고(약 65개), PyTorch와 같은 NVIDIA 라이브러리를
+#   다른 버전으로 요구할 수 있어 섞으면 ROS2 쪽이 깨질 위험이 있음. 학습 결과(가중치)만 주고받으면 된다.
+# 버전 (2026-10-08 확인, Python 3.10에서 설치 가능한 최신 조합):
+#   jax 0.6.2 (CUDA 12), mujoco-mjx 3.15.0 (= mujoco 버전과 반드시 같아야 함), brax 0.14.1
+#   numpy<2 : biped_sim과 맞추기 위해 (jax는 numpy>=1.26이면 됨 → 1.26.4)
+
+mujoco==3.15.0
+mujoco-mjx==3.15.0
+jax[cuda12]==0.6.2
+brax==0.14.1
+tensorboardX            # TensorBoard 기록 (보기는 .venv의 tensorboard로: tensorboard --logdir output/learning)
+pytest                  # tests/test_walk_mjx.py 실행용
+numpy<2
