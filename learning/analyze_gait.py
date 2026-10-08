@@ -3,9 +3,9 @@
 
 실행 (GPU 학습 환경에서: source scripts/activate_gpu.sh)
     python learning/analyze_gait.py                                   # 가장 최근 학습 정책
-    python learning/analyze_gait.py --params output/learning/walk_<...>/params.pkl
-    python learning/analyze_gait.py --params output/learning/walk_<...>/checkpoints/step_00010649600.pkl
-    python learning/analyze_gait.py --run output/learning/walk_<...>   # 학습 중 저장된 정책을 모두 비교 → 가장 좋은 걸음
+    python learning/analyze_gait.py --params output/learning/<YYMMDD_HHMMSS>_walk/params.pkl
+    python learning/analyze_gait.py --params output/learning/<YYMMDD_HHMMSS>_walk/checkpoints/step_00010649600.pkl
+    python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # 저장된 정책을 모두 비교 → 가장 좋은 걸음
 
 결과 (output/gait/<실행 폴더 이름>_<학습 스텝>/)
     walk.mp4        옆(왼쪽)·앞(오른쪽)에서 본 영상, 실시간 속도

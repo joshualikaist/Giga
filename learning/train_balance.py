@@ -11,7 +11,7 @@
     tensorboard --logdir output/learning      → 웹 브라우저에서 http://localhost:6006
     보상 항목별 값(reward_terms/), 버틴 시간(episode/), 세기별 시험 결과(eval/), PPO 내부 값(train/)
 
-결과 (output/learning/balance_<날짜_시각>/)
+결과 (output/learning/<YYMMDD_HHMMSS>_balance/, 예: 261008_032517_balance — TensorBoard Runs에 이 이름으로 보임)
     model.zip           학습된 정책 (신경망)
     progress.csv        학습 기록 (스텝별 평균 보상, 에피소드 길이 등)
     events.out.tfevents.*  TensorBoard 기록
@@ -43,6 +43,8 @@ def main():
     parser.add_argument("--push-range", type=float, nargs=2, default=(20.0, 60.0), metavar=("MIN", "MAX"),
                         help="학습 중 미는 힘 범위 [N] (기본 20 60)")
     parser.add_argument("--output-dir", type=Path, default=RUNS_DIR, help="결과 저장 폴더")
+    parser.add_argument("--name", default="balance",
+                        help="실험 이름. 결과 폴더 = <YYMMDD_HHMMSS>_<이름> (날짜가 앞이라 TensorBoard Runs가 시간순)")
     parser.add_argument("--eval-every", type=int, default=50_000,
                         help="이 스텝마다 30/40/50 N 시험을 해서 TensorBoard eval/에 기록 (0이면 안 함)")
     args = parser.parse_args()
@@ -62,7 +64,7 @@ def main():
         raise SystemExit("CUDA(GPU)를 쓸 수 없습니다 → --device cpu")
     torch.set_num_threads(1)  # 작은 신경망은 스레드 1개가 오히려 빠름 (병렬은 환경 쪽에서)
 
-    run_dir = args.output_dir.resolve() / f"balance_{datetime.now():%Y%m%d_%H%M%S}"
+    run_dir = args.output_dir.resolve() / f"{datetime.now():%y%m%d_%H%M%S}_{args.name}"
     latest_model = args.output_dir.resolve() / "balance_latest.zip"
     run_dir.mkdir(parents=True, exist_ok=True)
 

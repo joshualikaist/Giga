@@ -122,7 +122,7 @@ python learning/train_balance.py --steps 20000     # 동작 확인만 (약 15초
 
 `평균 버틴 시간`과 `평균 보상`이 올라가면 학습이 되고 있는 것입니다. 끝나면 학습 전/후 비교표가 자동으로 나옵니다.
 
-결과는 `output/learning/balance_<날짜_시각>/`에 저장됩니다 (`model.zip`, `progress.csv`, `learning_curve.png`).
+결과는 `output/learning/<YYMMDD_HHMMSS>_balance/` (예: `261008_032517_balance`)에 저장됩니다 (`model.zip`, `progress.csv`, `learning_curve.png`).
 가장 최근 모델은 `output/learning/balance_latest.zip`에도 복사되어, `evaluate_balance.py`가 옵션 없이 이것을 씁니다.
 같은 시드(`--seed 0`)와 같은 장치면 결과가 똑같이 재현됩니다 (CPU에서 두 번 실행해 같은 표를 확인).
 

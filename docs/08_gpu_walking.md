@@ -18,7 +18,7 @@ tensorboard --logdir output/learning              # → 웹 브라우저에서 h
 
 # 끝난 뒤: 걸음 보기·분석 (source scripts/activate_gpu.sh 후)
 python learning/play_walk.py --view               # MuJoCo 화면 (Enter로 학습 그래프도 볼 수 있음)
-python learning/analyze_gait.py --run output/learning/walk_<날짜_시각>   # 영상·연속 사진·그래프·절뚝임 점수 (§6)
+python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # 영상·연속 사진·그래프·절뚝임 점수 (§6)
 
 # 걸음 다듬기: 가장 좋은 정책에서 보상을 바꿔 이어서 학습 (§6)
 python learning/train_walk_gpu.py --init-from <정책.pkl> --reward symmetry=-2 --steps 10000000 --watch
@@ -168,7 +168,8 @@ TensorBoard (`tensorboard --logdir output/learning` → http://localhost:6006):
 | `episode/...` | 학습용 환경들의 에피소드 통계 (평가와 비슷하지만 탐색 잡음이 섞임) |
 
 CPU 학습(docs/07)과 같은 `output/learning` 폴더에 쌓이므로 TensorBoard 하나로 모두 볼 수 있습니다.
-실행마다 폴더 이름(`walk_…`, `walk_v2_…`, `balance_…`)이 달라 왼쪽 Runs에서 골라 비교합니다.
+실행마다 폴더 이름이 `날짜_시각_내용`(예: `261008_103001_walk_v2`, `261008_032517_balance`)이라 Runs가 시간순으로 정렬되고, 골라 비교할 수 있습니다.
+내용 부분은 학습 명령의 `--name`으로 정합니다 (기본 `walk`, `balance`).
 
 ## 5. 결과 (이 PC 실측)
 
@@ -260,8 +261,8 @@ Brax는 평가 구간 단위로 반올림하므로 실제로는 3,195만 스텝�
 
 ```bash
 source scripts/activate_gpu.sh
-python learning/analyze_gait.py --params output/learning/walk_<날짜_시각>/params.pkl   # 정책 하나
-python learning/analyze_gait.py --run output/learning/walk_<날짜_시각>                 # 학습 중 저장된 정책을 모두 비교
+python learning/analyze_gait.py --params output/learning/<YYMMDD_HHMMSS>_walk/params.pkl   # 정책 하나
+python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk                 # 학습 중 저장된 정책을 모두 비교
 ```
 
 | 결과 (`output/gait/<실행>_<스텝>/`) | 내용 |
@@ -307,7 +308,7 @@ python learning/analyze_gait.py --run output/learning/walk_<날짜_시각>      
 - `step_length` (+5): 착지할 때 반대 발보다 앞에 놓은 거리 / 목표 보폭(0.12 m = 속도 × 반 박자), 최대 1점. 목표보다 길게 디뎌도 점수가 같아서, 한쪽 다리만 길게 딛는 걸음으로는 점수를 더 받을 수 없습니다.
 
 ```bash
-python learning/train_walk_gpu.py --init-from output/learning/walk_<5.2 실행>/params.pkl \
+python learning/train_walk_gpu.py --init-from output/learning/261008_110341_walk/params.pkl \
     --reward symmetry=-2 --reward step_length=5 --steps 10000000 --evals 11 --name walk_sym --watch
 ```
 
@@ -335,7 +336,7 @@ python learning/train_walk_gpu.py --init-from output/learning/walk_<5.2 실행>/
 - 1차의 정책에서 이어서 학습합니다.
 
 ```bash
-python learning/train_walk_gpu.py --init-from output/learning/walk_sym_<...>/checkpoints/step_00010649600.pkl \
+python learning/train_walk_gpu.py --init-from output/learning/261008_113545_walk_sym/checkpoints/step_00010649600.pkl \
     --reward symmetry=-2 --reward step_length=5 --reward heading=-3 --steps 10000000 --evals 11 --name walk_sym2 --watch
 ```
 

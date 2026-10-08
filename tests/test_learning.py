@@ -1,4 +1,5 @@
 """강화학습 예제 테스트 (학습 패키지가 없으면 건너뜀: bash scripts/setup_learning.sh)."""
+import re
 import subprocess
 import sys
 
@@ -50,8 +51,9 @@ def test_train_script_runs(tmp_path):
                            "--steps", "2048", "--envs", "2", "--output-dir", str(tmp_path)],
                           capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
-    run_dirs = list(tmp_path.glob("balance_2*"))
+    run_dirs = list(tmp_path.glob("*_balance"))
     assert len(run_dirs) == 1
+    assert re.fullmatch(r"\d{6}_\d{6}_balance", run_dirs[0].name)   # YYMMDD_HHMMSS_이름 (TensorBoard 시간순)
     for name in ("model.zip", "progress.csv", "learning_curve.png"):
         assert (run_dirs[0] / name).exists(), name
     assert (tmp_path / "balance_latest.zip").exists()

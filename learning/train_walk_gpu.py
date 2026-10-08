@@ -7,7 +7,7 @@
     python learning/train_walk_gpu.py                       # 화면 없이 학습만
     python learning/train_walk_gpu.py --steps 2000000       # 짧게 동작 확인
     python learning/train_walk_gpu.py --reward heading=-1 --name walk_heading   # 보상 바꿔 실험
-    python learning/train_walk_gpu.py --init-from output/learning/walk_<...>/params.pkl \
+    python learning/train_walk_gpu.py --init-from output/learning/<YYMMDD_HHMMSS>_walk/params.pkl \
         --reward symmetry=-2 --steps 10000000 --name walk_sym                  # 이전 걸음에서 이어서 다듬기
 
 학습 화면 (--watch, = 다른 터미널에서 python learning/play_walk.py --live)
@@ -20,7 +20,7 @@
     walk/episode_seconds       : 평균 버틴 시간 (최대 10 s)
     walk/gait_<flight|single|double>_pct : 걸음 방식 — 두 발 공중 / 한 발 / 두 발 땅 시간 비율 [%]
 
-결과 (output/learning/walk_<날짜_시각>/)
+결과 (output/learning/<YYMMDD_HHMMSS>_<이름>/, 예: 261008_140644_walk — TensorBoard Runs에 이 이름으로 보임)
     params.pkl     학습된 정책 (평가할 때마다 갱신 → 학습 중에도 화면으로 볼 수 있음)
     checkpoints/   평가마다의 정책 step_<스텝>.pkl (중간 정책이 더 좋을 수 있음 → analyze_gait.py --run)
     config.json    학습 설정 (보상 가중치 등)
@@ -57,11 +57,12 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--reward", action="append", default=[], metavar="이름=가중치",
                         help="보상 가중치 바꾸기 (여러 번 가능). 예: --reward heading=-1.0 --reward flight=-1.0")
-    parser.add_argument("--name", default="walk", help="결과 폴더 이름 앞부분 (TensorBoard에서 실행 구분용)")
+    parser.add_argument("--name", default="walk",
+                        help="실험 이름. 결과 폴더 = <YYMMDD_HHMMSS>_<이름> (날짜가 앞이라 TensorBoard Runs가 시간순)")
     parser.add_argument("--output-dir", type=Path, default=RUNS_DIR)
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
                         help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
-                             "예: output/learning/walk_<...>/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
+                             "예: output/learning/<YYMMDD_HHMMSS>_walk/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
     parser.add_argument("--watch", action="store_true",
                         help="학습 화면을 함께 띄움 (그래프 + 최신 정책으로 걷는 로봇, Enter로 전환) = play_walk.py --live")
     args = parser.parse_args()
@@ -92,7 +93,7 @@ def main():
     unknown = sorted(set(overrides) - set(walk_mjx.REWARD_WEIGHTS))
     if unknown:
         raise SystemExit(f"모르는 보상 항목 {unknown}. 사용 가능: {', '.join(walk_mjx.REWARD_WEIGHTS)}")
-    run_dir = args.output_dir.resolve() / f"{args.name}_{datetime.now():%Y%m%d_%H%M%S}"
+    run_dir = args.output_dir.resolve() / f"{datetime.now():%y%m%d_%H%M%S}_{args.name}"
     run_dir.mkdir(parents=True, exist_ok=True)
     latest = args.output_dir.resolve() / "walk_latest.pkl"
     config = {

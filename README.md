@@ -207,7 +207,7 @@ tensorboard --logdir output/learning
 ```
 
 1. 같은 컴퓨터의 웹 브라우저(Chrome, Firefox 등) 주소창에 **http://localhost:6006** 을 입력합니다.
-2. 위쪽 **SCALARS** 탭에 그래프가 나옵니다. 왼쪽 **Runs**에서 보고 싶은 학습(`balance_…`, `walk_…`)에 체크합니다.
+2. 위쪽 **SCALARS** 탭에 그래프가 나옵니다. 왼쪽 **Runs**에서 보고 싶은 학습에 체크합니다. 이름은 `날짜_시각_내용` (예: `261008_140644_walk_scratch`)이라 시간순으로 정렬됩니다.
 3. 위쪽 검색칸에 `reward` 를 입력하면 보상 그래프만 모아서 볼 수 있습니다.
 4. 그래프는 30초마다 자동으로 새로 고쳐집니다 (오른쪽 위 ⟳ 버튼으로 바로 새로 고칠 수도 있음).
 5. 끄려면 TensorBoard 터미널에서 `Ctrl+C`를 누릅니다.
@@ -241,7 +241,7 @@ python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보�
   좌우가 번갈아 높으면 걷기이고, 둘이 함께 낮으면 두 발이 다 떠 있는 뛰기입니다.
 
 ✅ 확인: 학습 출력에서 `버틴 시간 10.00 s / 10 s`, `앞으로 속도 +0.30 m/s`, `두 발 공중 0%` 근처가 되면 넘어지지 않고 목표 속도로 걷는 것입니다.
-더 자세한 그래프는 9단계의 TensorBoard(http://localhost:6006)에서 Runs의 `walk_…`를 고르면 됩니다.
+더 자세한 그래프는 9단계의 TensorBoard(http://localhost:6006)에서 Runs에서 `…_walk…`를 고르면 됩니다.
 `walk/forward_speed_mps`(속도), `walk/gait_flight_pct`(두 발 공중 비율), `eval/episode_reward/<항목>`(보상 항목별)을 보세요.
 
 > 학습 화면은 학습과 별도 프로세스이고 GPU를 거의 쓰지 않게 설정되어 있습니다. 창을 닫아도 학습은 계속됩니다.
@@ -252,7 +252,7 @@ python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보�
 학습이 끝나면 걸음을 영상·사진·그래프로 확인하고, 문제가 있으면 보상을 바꿔 **그 정책에서 이어서** 학습합니다.
 
 ```bash
-python learning/analyze_gait.py --run output/learning/walk_<날짜_시각>   # 저장된 정책을 모두 비교 → 가장 좋은 걸음을 영상까지 분석
+python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # 저장된 정책을 모두 비교 → 가장 좋은 걸음을 영상까지 분석
 # → output/gait/<실행>_<스텝>/ 에 walk.mp4(영상), walk_slow.mp4(4배 느리게), filmstrip.png(한 걸음 연속 사진),
 #   gait.png(관절 각도 좌우 비교 그래프), 터미널에 좌우 대칭 수치와 '절뚝임 점수'
 python learning/train_walk_gpu.py --init-from <위에서 고른 정책.pkl> \
