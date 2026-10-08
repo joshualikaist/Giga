@@ -291,7 +291,8 @@ python learning/train_walk_gpu.py --robot open_duck_mini                        
 python learning/train_walk_gpu.py --robot open_duck_mini --reward reference=3 --name duck_ref  # 참고 동작 모방
 ```
 
-> 오리는 `--watch` 없이 학습하세요. 학습 화면이 오리의 CAD 메시를 계속 그리면 학습이 4.6배 느려집니다 (실측).
+> 오리를 `--watch`로 학습하면 같은 GPU가 오리의 CAD 메시(삼각형 37만 개)를 계속 그려서 학습이 약 2배 느려집니다 (실측, 그림자·반사를 끈 뒤.
+> 끄기 전에는 4.6배). 창을 닫아도 학습은 계속되고, 다시 보려면 `python learning/play_walk.py --live --params <실행 폴더>/params.pkl`.
 
 울퉁불퉁한 지형(언덕·불규칙한 경사로·장애물) 실험과 지형 학습:
 

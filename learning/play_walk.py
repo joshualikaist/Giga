@@ -49,6 +49,9 @@ def main():
     else:
         raise SystemExit(f"정책이 없습니다: {args.params}\n→ 먼저 python learning/train_walk_gpu.py")
     runner = make_runner(config, args.backend)
+    if args.live:   # 학습 화면: 그림자·바닥 반사를 끄면 한 장 그리는 시간 1/4 (오리 8.6 → 2.1 ms, 실측) → GPU 학습을 덜 방해
+        runner.model.light_castshadow[:] = 0
+        runner.model.mat_reflectance[:] = 0
     print(f"정책: {args.params} | 로봇 {runner.spec.name} | 목표 속도 {runner.target_speed} m/s | 시뮬레이터: {args.backend}")
 
     if not (args.view or args.live):
