@@ -85,6 +85,14 @@ def main():
                         print(f"  ↻ 새 정책 불러옴 (학습 스텝 {config.get('saved_step', '?')})")
                     except Exception as e:  # noqa: BLE001
                         print(f"  (정책 다시 읽기 실패, 다음에 재시도: {type(e).__name__})")
+                config_path = params_path.with_name("config.json")
+                if args.live and not dash.finished and config_path.exists():   # 학습이 끝났나 (train_walk_gpu가 표시)
+                    try:
+                        dash.finished = bool(json.loads(config_path.read_text()).get("finished"))
+                    except (OSError, ValueError):
+                        pass
+                    if dash.finished:
+                        print("학습 완료 — 마지막 정책을 계속 재생합니다 (창을 닫으면 끝)")
                 episode += 1
                 print(f"[에피소드 {episode}]" + ("" if policy is not None else " (첫 정책 기다리는 중: 행동 0)"))
                 dash.start_episode()

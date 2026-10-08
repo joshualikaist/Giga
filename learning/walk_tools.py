@@ -36,8 +36,10 @@ TAP_HEIGHT = 0.015       # [m] 발을 이보다 낮게 들었다 다시 닿으�
 
 # ---------------------------------------------------------------------------- 정책
 def get_spec(config: dict) -> walk_mjx.WalkSpec:
-    """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped, servo 항목이 없음 = ideal)."""
-    return walk_mjx.with_servo(walk_mjx.SPECS[config.get("robot", "simple_biped")], config.get("servo", "ideal"))
+    """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped, servo 항목이 없음 = ideal,
+    home_knee 항목이 없음 = 로봇 설정의 서 있는 자세)."""
+    spec = walk_mjx.with_servo(walk_mjx.SPECS[config.get("robot", "simple_biped")], config.get("servo", "ideal"))
+    return spec if config.get("home_knee") is None else walk_mjx.with_home_knee(spec, config["home_knee"])
 
 
 @functools.lru_cache(maxsize=4)

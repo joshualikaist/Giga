@@ -149,6 +149,8 @@ class Dashboard:
             self._last_toggle = now
             self.mode = "robot" if self.mode == "graphs" else "graphs"
 
+    finished = False   # 학습이 끝났으면 True (play_walk가 config.json의 finished를 보고 바꿈)
+
     def set_policy(self, config: dict, run_dir: Path | None, reloaded: bool = True) -> None:
         self.config = config
         self.step = config.get("saved_step")
@@ -207,7 +209,8 @@ class Dashboard:
             # 글자 칸(text1, text2)을 둘 다 쓰면 가운데 정렬 위치에서 서로 겹쳐서 한 칸에 모아 씀
             viewer.set_texts([
                 (font, grid.mjGRID_TOP,
-                 f"LIVE TRAINING   {run}   step {step}{progress}{alive}   policy reloads {self.reloads}", ""),
+                 f"{'TRAINING FINISHED (replaying final policy, close window to exit)' if self.finished else 'LIVE TRAINING'}"
+                 f"   {run}   step {step}{progress}{alive}   policy reloads {self.reloads}", ""),
                 (font, grid.mjGRID_BOTTOM,
                  f"[Enter] robot view   |   t {t:4.1f} s   {state['vx']:+.2f} m/s   |   last 4 s: both feet in air "
                  f"{self.recent[0]:.0f}%, one foot {self.recent[1]:.0f}%", ""),
@@ -217,7 +220,7 @@ class Dashboard:
             viewer.set_texts([
                 (font, grid.mjGRID_TOPLEFT,
                  "training step\npolicy reloads\nepisode time\nforward speed\ndistance\nfeet on ground (L R)",
-                 f"{step}{progress}\n{self.reloads}\n{t:5.2f} s / 10 s\n"
+                 f"{step}{progress}{' (finished)' if self.finished else ''}\n{self.reloads}\n{t:5.2f} s / 10 s\n"
                  f"{state['vx']:+.2f} m/s (target {self.config['target_speed']:.2f})\n{distance:+.2f} m\n"
                  f"{'#' if contact[0] else '.'}   {'#' if contact[1] else '.'}"),
                 (font, grid.mjGRID_TOPRIGHT, "[Enter] training graphs\n\nlast 4 s\nboth feet in air\none foot",

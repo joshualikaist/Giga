@@ -37,6 +37,7 @@
 import argparse
 import functools
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -77,6 +78,8 @@ def main():
                              "biped_sim/envs/walk_mjx.py SERVO_MODELS")
     parser.add_argument("--friction", type=float, nargs=2, default=None, metavar=("최소", "최대"),
                         help="환경마다 바닥 마찰 계수를 이 범위에서 무작위로 (기본: 1.0 고정)")
+    parser.add_argument("--home-knee", type=float, default=None, metavar="RAD",
+                        help="서 있는 자세의 무릎 각도 (오리 기본 0.8). 덜 굽히면 한 발 버티는 무릎 토크가 줄어듦 (docs/09 §9.5)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
                         help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
                              "예: output/learning/<YYMMDD_HHMMSS>_walk/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
@@ -103,6 +106,8 @@ def main():
     if args.servo not in walk_mjx.SERVO_MODELS:
         raise SystemExit(f"모르는 서보 모델 '{args.servo}'. 사용 가능: {', '.join(walk_mjx.SERVO_MODELS)}")
     spec = walk_mjx.with_servo(walk_mjx.SPECS[args.robot], args.servo)
+    if args.home_knee is not None:
+        spec = walk_mjx.with_home_knee(spec, args.home_knee)
     if not spec.robot.urdf.exists():
         raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
     speed = spec.target_speed if args.speed is None else args.speed
@@ -119,6 +124,10 @@ def main():
     unknown = sorted(set(overrides) - set(spec.reward_weights))
     if unknown:
         raise SystemExit(f"모르는 보상 항목 {unknown}. 사용 가능: {', '.join(spec.reward_weights)}")
+    # Brax는 평가 간격마다 '학습 단위'(배치 256 × 펼침 20 × 미니배치 16 = 81,920 스텝)를 정수 개로 올려서 돈다
+    # → 실제 스텝은 요청보다 조금 많다 (예: 2,000만 요청 → 30 간격 × 9단위 × 81,920 = 22,118,400)
+    unit, intervals = 256 * 20 * 16, max(args.evals - 1, 1)
+    total_steps = intervals * math.ceil(args.steps / (intervals * unit)) * unit
     run_dir = args.output_dir.resolve() / f"{datetime.now():%y%m%d_%H%M%S}_{name}"
     run_dir.mkdir(parents=True, exist_ok=True)
     latest = args.output_dir.resolve() / "walk_latest.pkl"
@@ -126,10 +135,10 @@ def main():
         "run_dir": str(run_dir),
         "init_from": str(args.init_from.resolve()) if args.init_from else None,
         "robot": args.robot,
-        "target_speed": speed, "steps": args.steps, "envs": args.envs, "seed": args.seed,
+        "target_speed": speed, "steps": total_steps, "steps_requested": args.steps, "envs": args.envs, "seed": args.seed,
         "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT, "gait_period": spec.gait_period,
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
-        "servo": args.servo, "friction_range": args.friction,
+        "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08},
         "policy_hidden": [128, 128, 128], "value_hidden": [256, 256, 256],
@@ -139,9 +148,11 @@ def main():
     print("=" * 76)
     print(f"과제: {args.robot} 로봇이 앞으로 {speed} m/s로 걷기 (넘어지면 끝, 에피소드 최대 10 s)"
           + (" — 울퉁불퉁한 지형 12 × 12 m, 무작위 출발 위치" if args.terrain == "rough" else ""))
-    print(f"학습: Brax PPO, {args.steps:,} 스텝, GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
+    print(f"학습: Brax PPO, {total_steps:,} 스텝 (요청 {args.steps:,} → Brax가 평가 간격마다 {unit:,} 스텝 단위로 올림), "
+          f"GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
     print(f"보상 가중치: {config['reward_weights']}")
-    print(f"서보 모델: {args.servo}" + (f", 바닥 마찰 {args.friction[0]}~{args.friction[1]} 무작위" if args.friction else ""))
+    print(f"서보 모델: {args.servo}" + (f", 바닥 마찰 {args.friction[0]}~{args.friction[1]} 무작위" if args.friction else "")
+          + (f", 서 있는 자세 무릎 {args.home_knee} rad (기준 높이 {spec.nominal_height:.3f} m)" if args.home_knee else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -189,7 +200,7 @@ def main():
         leg_asym = float(np.degrees(np.sqrt(gait["leg_asymmetry"] / spec.n)))
         writer.add_scalar("walk/leg_asymmetry_deg", leg_asym, step)
         writer.flush()
-        print(f"  스텝 {step:>11,} / {args.steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
+        print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
               f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | "
               f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
@@ -241,10 +252,13 @@ def main():
         restore_params=brax_model.load_params(str(args.init_from)) if args.init_from else None,
     )
     writer.close()
+    # 학습 화면(play_walk --live)이 '학습 끝, 마지막 정책 재생 중'으로 바꿔 보이게
+    saved = json.loads((run_dir / "config.json").read_text())
+    (run_dir / "config.json").write_text(json.dumps({**saved, "finished": True}, indent=2, ensure_ascii=False))
     print(f"\n학습 완료: {time.perf_counter() - t_start:.0f} s")
     print(f"정책 저장: {run_dir / 'params.pkl'}  (최신: {latest})")
     print("화면으로 보기:  python learning/play_walk.py --view"
-          + ("   (--watch 학습 화면은 창을 닫으면 끝납니다)" if args.watch else ""))
+          + ("   (--watch 학습 화면은 마지막 정책을 계속 재생합니다. 창을 닫으면 끝)" if args.watch else ""))
 
 
 if __name__ == "__main__":

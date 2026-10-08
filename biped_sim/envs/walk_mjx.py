@@ -24,6 +24,7 @@ GPU(MJX)를 위한 단순화 (CPU MuJoCo와 다른 점) — docs/08 §3
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 from dataclasses import dataclass, field, replace
 
@@ -95,6 +96,7 @@ class WalkSpec:
     sim_overrides: dict = field(default_factory=dict)   # 이 과제용 SimConfig (충돌 단순화 등)
     pd_gains: tuple[float, float] | None = None          # (kp, kd) 모든 구동 관절에. None = 로봇 설정(RobotConfig) 값
     servo: str = "ideal"                                  # 서보 모델 이름 (SERVO_MODELS, with_servo로 바꿈)
+    home_knee: float | None = None                        # 서 있는 자세의 무릎 각도를 바꿨으면 그 값 (with_home_knee)
 
     @property
     def n(self) -> int:
@@ -161,6 +163,31 @@ def with_servo(spec: WalkSpec, servo: str) -> WalkSpec:
     if not model:
         return spec
     return replace(spec, servo=servo, pd_gains=model["pd_gains"], sim_overrides={**spec.sim_overrides, **model["sim"]})
+
+
+@functools.lru_cache(maxsize=8)
+def _home_base_height(spec_name: str, home_items: tuple) -> float:
+    """home 자세로 바닥에 세웠을 때 몸통(베이스) 높이 [m] (빌더가 발바닥이 바닥에 닿게 맞춘 키프레임)."""
+    robot = replace(SPECS[spec_name].robot, home_pose=dict(home_items))
+    model = build_robot_spec(robot.urdf, robot.sim_config(fixed_base=False, **SPECS[spec_name].sim_overrides)).compile()
+    return float(model.key("home").qpos[2])
+
+
+def with_home_knee(spec: WalkSpec, knee: float) -> WalkSpec:
+    """서 있는 자세를 무릎 knee [rad]로 바꾼 같은 과제 (오리처럼 hip·ankle = ∓knee/2로 발바닥 수평, 발이 엉덩이 아래).
+    정책 행동은 home ± action_scale이므로 운동 범위도 함께 옮겨 간다. 몸통 기준 높이·넘어짐 높이는 서 있는 높이 변화만큼 옮김.
+    무릎을 덜 굽히면 한 발로 버티는 무릎 토크가 줄어든다 (docs/09 §8.2, 0.8 rad 0.74 N·m → 0.6 rad 약 0.62 N·m)."""
+    base = SPECS[spec.name]
+    pose = dict(base.robot.home_pose)
+    hip_sign = {"left": -1.0, "right": 1.0} if spec.name == "open_duck_mini" else None
+    if hip_sign is None:
+        raise ValueError("자세 바꾸기(home_knee)는 지금 오리 로봇(open_duck_mini)만 지원합니다")
+    for side, sign in hip_sign.items():   # 오리는 hip_pitch만 좌우 부호가 반대 (docs/09 §4)
+        pose.update({f"{side}_hip_pitch": sign * knee / 2, f"{side}_knee": knee, f"{side}_ankle": -knee / 2})
+    shift = (_home_base_height(spec.name, tuple(sorted(pose.items())))
+             - _home_base_height(spec.name, tuple(sorted(base.robot.home_pose.items()))))
+    return replace(spec, robot=replace(spec.robot, home_pose=pose), home_knee=knee,
+                   nominal_height=spec.nominal_height + shift, fall_height=spec.fall_height + shift)
 
 
 def mirror_table(model: mujoco.MjModel, joints, foot_frames, delta: float = 0.2) -> tuple[list, list, list]:

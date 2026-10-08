@@ -111,6 +111,33 @@ def test_open_duck_servo_model_and_random_friction():
 
 @pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
                     reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_open_duck_home_knee_posture():
+    """서 있는 자세 바꾸기(--home-knee): 무릎을 덜 굽히면 몸통이 높아지고(기준 높이도 같이), 한 발 무릎 토크가 줄고,
+    행동 0으로 서 있으면 새 기준 높이를 지킨다. 학습 설정에 저장되어 재생 때도 같은 자세 (walk_tools.get_spec)."""
+    import mujoco
+
+    import feasibility as F
+    from walk_tools import MujocoRunner, get_spec
+
+    base = walk_mjx.SPECS["open_duck_mini"]
+    spec = get_spec({"robot": "open_duck_mini", "home_knee": 0.6})
+    assert spec.robot.home_pose["left_knee"] == 0.6 and spec.robot.home_pose["right_hip_pitch"] == pytest.approx(0.3)
+    assert 0.003 < spec.nominal_height - base.nominal_height < 0.008                  # 약 5 mm 높아짐
+    assert base.robot.home_pose["left_knee"] == pytest.approx(0.8)                     # 원래 로봇 설정은 그대로
+    runner = MujocoRunner(spec)
+    data = mujoco.MjData(runner.model)
+    data.qpos[:] = runner.info["home_qpos"]
+    mujoco.mj_forward(runner.model, data)
+    assert abs(F.static_torques(runner.model, data, runner.info["base_body"])["knee"]) < F.SERVO["rated"]   # 0.61 < 0.64
+    runner.reset()
+    for _ in range(50):
+        runner.step(np.zeros(spec.n))
+    height = runner.data.xpos[runner.info["base_body"], 2]
+    assert height == pytest.approx(spec.nominal_height, abs=0.05 * spec.nominal_height)
+
+
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
 def test_feasibility_estimates_for_open_duck():
     """동역학 한계 계산(learning/feasibility.py, docs/09 §8): 2026-10-08 실측값이 그대로 나오는지와 물리적으로 맞는 관계."""
     import feasibility as F
