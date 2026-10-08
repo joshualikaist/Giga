@@ -4,6 +4,7 @@
 실행 (GPU 학습 환경에서. 처음 한 번: bash scripts/setup_gpu_learning.sh)
     source scripts/activate_gpu.sh
     python learning/train_walk_gpu.py --watch               # 기본 3,000만 스텝 + 학습 화면(그래프·로봇) 함께
+    python learning/train_walk_gpu.py --robot open_duck_mini --watch   # 오리 로봇 (bash scripts/get_open_duck.sh 먼저)
     python learning/train_walk_gpu.py                       # 화면 없이 학습만
     python learning/train_walk_gpu.py --steps 2000000       # 짧게 동작 확인
     python learning/train_walk_gpu.py --reward symmetry=0 --name walk_nosym     # 보상 바꿔 실험 (대칭 보상 끄기)
@@ -53,12 +54,14 @@ def main():
     parser.add_argument("--steps", type=int, default=30_000_000, help="총 학습 스텝 (제어 스텝, 1스텝 = 0.02 s)")
     parser.add_argument("--envs", type=int, default=1024, help="GPU에서 동시에 돌릴 시뮬레이션 개수")
     parser.add_argument("--evals", type=int, default=31, help="학습 중 평가 횟수 (= 그래프 점 개수, 모델 저장 횟수)")
-    parser.add_argument("--speed", type=float, default=0.3, help="목표 걷기 속도 [m/s]")
+    parser.add_argument("--robot", default="simple_biped", help="로봇: simple_biped, open_duck_mini (docs/09)")
+    parser.add_argument("--speed", type=float, default=None, help="목표 걷기 속도 [m/s] (기본: 로봇별, simple 0.3 / 오리 0.15)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--reward", action="append", default=[], metavar="이름=가중치",
                         help="보상 가중치 바꾸기 (여러 번 가능). 예: --reward heading=-1.0 --reward flight=-1.0")
-    parser.add_argument("--name", default="walk",
-                        help="실험 이름. 결과 폴더 = <YYMMDD_HHMMSS>_<이름> (날짜가 앞이라 TensorBoard Runs가 시간순)")
+    parser.add_argument("--name", default=None,
+                        help="실험 이름 (기본: walk, 오리는 duck_walk). 결과 폴더 = <YYMMDD_HHMMSS>_<이름> "
+                             "(날짜가 앞이라 TensorBoard Runs가 시간순)")
     parser.add_argument("--output-dir", type=Path, default=RUNS_DIR)
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
                         help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
@@ -81,33 +84,41 @@ def main():
     if jax.default_backend() != "gpu":
         print(f"[warn] JAX가 GPU가 아니라 {jax.default_backend()}를 씁니다. 매우 느릴 수 있습니다.")
 
+    if args.robot not in walk_mjx.SPECS:
+        raise SystemExit(f"모르는 로봇 '{args.robot}'. 사용 가능: {', '.join(walk_mjx.SPECS)}")
+    spec = walk_mjx.SPECS[args.robot]
+    if not spec.robot.urdf.exists():
+        raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
+    speed = spec.target_speed if args.speed is None else args.speed
+    name = args.name or ("walk" if args.robot == "simple_biped" else "duck_walk")
     if args.init_from and not args.init_from.exists():
         raise SystemExit(f"--init-from 정책 파일이 없습니다: {args.init_from}")
     overrides = {}
     for item in args.reward:   # 결과 폴더를 만들기 전에 확인 (오타로 빈 폴더가 생기지 않게)
-        name, _, value = item.partition("=")
+        key, _, value = item.partition("=")
         try:
-            overrides[name.strip()] = float(value)
+            overrides[key.strip()] = float(value)
         except ValueError:
             raise SystemExit(f"--reward는 이름=가중치 형식입니다 (예: --reward symmetry=-2). 받은 값: {item}")
-    unknown = sorted(set(overrides) - set(walk_mjx.REWARD_WEIGHTS))
+    unknown = sorted(set(overrides) - set(spec.reward_weights))
     if unknown:
-        raise SystemExit(f"모르는 보상 항목 {unknown}. 사용 가능: {', '.join(walk_mjx.REWARD_WEIGHTS)}")
-    run_dir = args.output_dir.resolve() / f"{datetime.now():%y%m%d_%H%M%S}_{args.name}"
+        raise SystemExit(f"모르는 보상 항목 {unknown}. 사용 가능: {', '.join(spec.reward_weights)}")
+    run_dir = args.output_dir.resolve() / f"{datetime.now():%y%m%d_%H%M%S}_{name}"
     run_dir.mkdir(parents=True, exist_ok=True)
     latest = args.output_dir.resolve() / "walk_latest.pkl"
     config = {
         "run_dir": str(run_dir),
         "init_from": str(args.init_from.resolve()) if args.init_from else None,
-        "target_speed": args.speed, "steps": args.steps, "envs": args.envs, "seed": args.seed,
-        "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT,
-        "action_scale": walk_mjx.ACTION_SCALE, "reward_weights": {**walk_mjx.REWARD_WEIGHTS, **overrides},
+        "robot": args.robot,
+        "target_speed": speed, "steps": args.steps, "envs": args.envs, "seed": args.seed,
+        "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT, "gait_period": spec.gait_period,
+        "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
         "policy_hidden": [128, 128, 128], "value_hidden": [256, 256, 256],
     }
     (run_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False))
 
     print("=" * 76)
-    print(f"과제: 앞으로 {args.speed} m/s로 걷기 (넘어지면 끝, 에피소드 최대 10 s)")
+    print(f"과제: {args.robot} 로봇이 앞으로 {speed} m/s로 걷기 (넘어지면 끝, 에피소드 최대 10 s)")
     print(f"학습: Brax PPO, {args.steps:,} 스텝, GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
     print(f"보상 가중치: {config['reward_weights']}")
     if args.init_from:
@@ -124,7 +135,7 @@ def main():
         subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("play_walk.py")), "--live",
                           "--params", str(run_dir / "params.pkl")], stdout=watch_log, stderr=subprocess.STDOUT)
 
-    env = walk_mjx.BipedWalkMjxEnv(target_speed=args.speed, reward_weights=overrides)
+    env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()
@@ -147,7 +158,7 @@ def main():
             writer.add_scalar(f"walk/gait_{k}_pct", 100.0 * gait[k], step)
         writer.add_scalar("walk/abs_heading_deg", float(np.degrees(gait["abs_heading"])), step)
         # 좌우 다리 동작 차이: 반 박자 어긋나게 비교한 관절 각도 차이의 RMS [°] (0이면 두 다리가 똑같이 움직임)
-        leg_asym = float(np.degrees(np.sqrt(gait["leg_asymmetry"] / 6)))
+        leg_asym = float(np.degrees(np.sqrt(gait["leg_asymmetry"] / spec.n)))
         writer.add_scalar("walk/leg_asymmetry_deg", leg_asym, step)
         writer.flush()
         print(f"  스텝 {step:>11,} / {args.steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "

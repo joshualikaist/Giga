@@ -166,8 +166,8 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `24 passed, 15 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(5개, 그 환경에서
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `24 passed, 16 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(6개, 그 환경에서
 `pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
@@ -280,7 +280,18 @@ python tutorials/t07_open_duck.py               # 뷰어: PD로 서 있는 오�
 ![Open Duck Mini](docs/images/open_duck_stand.png)
 
 받은 파일은 고치지 않고, 불러올 때 보완합니다 (메시 경로, 토크 한계, 충돌 형상 단순화 등).
-오픈소스 URDF 점검표와 확인 과정 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
+
+오리 걷기 학습 (10단계의 GPU 환경에서, 약 40분):
+
+```bash
+source scripts/activate_gpu.sh
+python learning/train_walk_gpu.py --robot open_duck_mini                                      # 보상만으로
+python learning/train_walk_gpu.py --robot open_duck_mini --reward reference=3 --name duck_ref  # 참고 동작 모방
+```
+
+> 오리는 `--watch` 없이 학습하세요. 학습 화면이 오리의 CAD 메시를 계속 그리면 학습이 4.6배 느려집니다 (실측).
+
+오픈소스 URDF 점검표, 확인 과정, 두 학습 방식 비교 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
 
 ### 막혔을 때
 

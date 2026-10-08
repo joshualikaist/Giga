@@ -3,9 +3,9 @@
 play_walk.py(화면), analyze_gait.py(영상·그래프 분석), 테스트가 함께 쓴다. GPU 학습 환경(.venv-mjx) 전용.
 
     policy, config = load_policy(Path("learning/pretrained/walk_policy.pkl"))
-    runner = MujocoRunner(config["target_speed"])
+    runner = make_runner(config)                        # 학습 설정의 로봇(simple_biped / open_duck_mini)
     rec = run_episode(runner, policy)                   # 10초 걷기, 제어 스텝(0.02 s)마다 상태 기록
-    m = gait_metrics(rec, runner.info["joint_names"])  # 속도, 발 접촉 비율, 좌우 대칭(절뚝임 점수) ...
+    m = gait_metrics(rec, runner.info)                  # 속도, 발 접촉 비율, 좌우 대칭(절뚝임 점수) ...
     print("\\n".join(summary_lines(m)))
 """
 from __future__ import annotations
@@ -31,8 +31,13 @@ TAP_HEIGHT = 0.015       # [m] 발을 이보다 낮게 들었다 다시 닿으�
 
 
 # ---------------------------------------------------------------------------- 정책
+def get_spec(config: dict) -> walk_mjx.WalkSpec:
+    """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped)."""
+    return walk_mjx.SPECS[config.get("robot", "simple_biped")]
+
+
 @functools.lru_cache(maxsize=4)
-def _policy_apply(policy_hidden: tuple, value_hidden: tuple):
+def _policy_apply(obs_size: int, action_size: int, policy_hidden: tuple, value_hidden: tuple):
     """신경망 구조별로 한 번만 컴파일되는 함수 apply(params, obs) → 행동.
     가중치(params)를 인자로 받으므로, 정책을 바꿔 끼워도(학습 화면의 갱신, 체크포인트 비교) 다시 컴파일하지 않는다."""
     import jax
@@ -40,7 +45,7 @@ def _policy_apply(policy_hidden: tuple, value_hidden: tuple):
     from brax.training.agents.ppo import networks as ppo_networks
 
     networks = ppo_networks.make_ppo_networks(
-        walk_mjx.OBS_SIZE, walk_mjx.ACTION_SIZE,
+        obs_size, action_size,
         preprocess_observations_fn=running_statistics.normalize,   # 학습 때 normalize_observations=True
         policy_hidden_layer_sizes=policy_hidden, value_hidden_layer_sizes=value_hidden)
     make_policy = ppo_networks.make_inference_fn(networks)
@@ -64,7 +69,8 @@ def load_policy(params_path: Path):
     config = json.loads(config_path.read_text())
     if is_checkpoint:   # 설정 파일의 saved_step은 마지막 저장 기준 → 파일 이름의 스텝으로
         config["saved_step"] = int(params_path.stem.split("_")[-1])
-    apply = _policy_apply(tuple(config["policy_hidden"]), tuple(config["value_hidden"]))
+    spec = get_spec(config)
+    apply = _policy_apply(spec.obs_size, spec.n, tuple(config["policy_hidden"]), tuple(config["value_hidden"]))
     params = brax_model.load_params(str(params_path))
     return (lambda obs: np.asarray(apply(params, obs))), config
 
@@ -85,39 +91,42 @@ class MujocoRunner:
     """일반 MuJoCo(C)로 학습 환경과 똑같은 규칙(관측·PD·제어 주기)을 재현. ROS2 sim_node와 같은 시뮬레이터.
     관측 계산이 학습 환경(walk_mjx._observation)과 같은지는 tests/test_walk_mjx.py가 확인한다."""
 
-    def __init__(self, target_speed: float):
-        self.W = W = walk_mjx
-        self.model, self.info = W.build_mjx_model()
+    def __init__(self, spec: walk_mjx.WalkSpec | str = "simple_biped", target_speed: float | None = None):
+        self.W = walk_mjx
+        self.spec = walk_mjx.SPECS[spec] if isinstance(spec, str) else spec
+        self.model, self.info = walk_mjx.build_mjx_model(self.spec)
         self.data = mujoco.MjData(self.model)
-        self.target_speed = target_speed
-        self.n_substeps = round(W.CONTROL_DT / W.PHYSICS_DT)
+        self.target_speed = self.spec.target_speed if target_speed is None else target_speed
+        self.n_substeps = round(walk_mjx.CONTROL_DT / walk_mjx.PHYSICS_DT)
 
     def reset(self) -> np.ndarray:
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self.info["home_qpos"]
         mujoco.mj_forward(self.model, self.data)
         self.t = 0.0
-        self.last_action = np.zeros(6)
+        self.last_action = np.zeros(self.spec.n)
         return self.obs()
 
     def step(self, action) -> np.ndarray:
-        W, d, i = self.W, self.data, self.info
+        d, i = self.data, self.info
         action = np.clip(action, -1, 1)
-        q_des = np.clip(i["q_home"] + W.ACTION_SCALE * action, i["q_range"][:, 0], i["q_range"][:, 1])
+        q_des = i["act_home"].copy()              # 정책 관절은 home + 행동, 나머지(머리 등)는 home
+        q_des[i["policy_act"]] += self.spec.action_scale * action
+        q_des = np.clip(q_des, i["act_range"][:, 0], i["act_range"][:, 1])
         for _ in range(self.n_substeps):   # 물리 1스텝마다 PD로 토크 계산 (모터 드라이버 역할)
-            q, dq = d.qpos[i["qpos_idx"]], d.qvel[i["qvel_idx"]]
+            q, dq = d.qpos[i["act_qpos_idx"]], d.qvel[i["act_qvel_idx"]]
             d.ctrl[:] = np.clip(i["kp"] * (q_des - q) - i["kd"] * dq, i["tau_limit"][:, 0], i["tau_limit"][:, 1])
             mujoco.mj_step(self.model, d)
-        self.t += W.CONTROL_DT
+        self.t += walk_mjx.CONTROL_DT
         self.last_action = action
         return self.obs()
 
     def obs(self) -> np.ndarray:
-        W, d, i = self.W, self.data, self.info
+        d, i = self.data, self.info
         rot = d.xmat[i["base_body"]].reshape(3, 3)
-        phase = 2 * np.pi * self.t / W.GAIT_PERIOD
+        phase = 2 * np.pi * self.t / self.spec.gait_period
         return np.concatenate([rot.T @ [0, 0, -1.0], d.qvel[3:6], rot.T @ d.qvel[0:3],
-                               [d.xpos[i["base_body"], 2] - W.NOMINAL_HEIGHT],
+                               [d.xpos[i["base_body"], 2] - self.spec.nominal_height],
                                d.qpos[i["qpos_idx"]] - i["q_home"], 0.1 * d.qvel[i["qvel_idx"]],
                                self.last_action, [self.target_speed], [np.sin(phase), np.cos(phase)]]
                               ).astype(np.float32)
@@ -126,11 +135,11 @@ class MujocoRunner:
 class MjxRunner(MujocoRunner):
     """학습 때와 똑같은 MJX 환경으로 재생 (화면 표시·기록용으로 매 스텝 MuJoCo 데이터에 복사)."""
 
-    def __init__(self, target_speed: float):
-        super().__init__(target_speed)
+    def __init__(self, spec: walk_mjx.WalkSpec | str = "simple_biped", target_speed: float | None = None):
+        super().__init__(spec, target_speed)
         import jax
         self.jax = jax
-        self.env = self.W.BipedWalkMjxEnv(target_speed=target_speed)
+        self.env = walk_mjx.BipedWalkMjxEnv(self.spec, target_speed=self.target_speed)
         self._reset, self._step = jax.jit(self.env.reset), jax.jit(self.env.step)
 
     def reset(self) -> np.ndarray:
@@ -148,6 +157,11 @@ class MjxRunner(MujocoRunner):
         mjx.get_data_into(self.data, self.model, self.s.pipeline_state)
 
 
+def make_runner(config: dict, backend: str = "mujoco") -> MujocoRunner:
+    """학습 설정(config.json)에 맞는 재생기. backend: mujoco(일반 MuJoCo) / mjx(학습과 같은 시뮬레이터)."""
+    return (MjxRunner if backend == "mjx" else MujocoRunner)(get_spec(config), config.get("target_speed"))
+
+
 # ---------------------------------------------------------------------------- 한 에피소드 기록
 def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
     """최대 10초 걷고, 제어 스텝(0.02 s)마다 상태를 기록해 돌려준다. 넘어지면 거기서 끝.
@@ -156,11 +170,13 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
     viewer  : 주면 매 스텝 화면을 갱신하고 실제 시간 속도로 진행 (창을 닫으면 끝)
     on_step : 매 스텝 on_step(state) 호출. state = {t, vx, distance, foot_z} (학습 화면 그래프, 영상 녹화용)
     """
-    W, m, d, info = runner.W, runner.model, runner.data, runner.info
-    leg_bodies = [[m.body(f"{side}_{part}").id for part in ("thigh", "shin", "foot")] for side in ("left", "right")]
+    W, sp, m, d, info = runner.W, runner.spec, runner.model, runner.data, runner.info
+    # 다리 막대 그림용 관절 (옆에서 본 고관절·무릎·발목): 관절 축이 지나는 점(xanchor)
+    leg_joints = [[m.joint(f"{side}_{j}").id for j in _sagittal_joints(info["joint_names"])]
+                  for side in ("left", "right")]
     foot_geoms = [next(g for g in range(m.ngeom) if m.geom_bodyid[g] == b and m.geom_contype[g])
                   for b in info["foot_bodies"]]
-    zero = np.zeros(W.ACTION_SIZE, dtype=np.float32)
+    zero = np.zeros(sp.n, dtype=np.float32)
 
     obs = runner.reset()
     x0 = d.xpos[info["base_body"], 0]
@@ -178,8 +194,8 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
         rec["base"].append(d.xpos[info["base_body"]].copy())
         rec["rpy"].append([np.arctan2(rot[2, 1], rot[2, 2]), np.arcsin(-np.clip(rot[2, 0], -1, 1)),
                            np.arctan2(rot[1, 0], rot[0, 0])])
-        # 고관절·무릎·발목 위치. .copy() 필수: d.xpos[b]는 MjData 메모리를 가리키는 '창'이라 두면 마지막 값으로 바뀜
-        rec["legs"].append([[d.xpos[b].copy() for b in leg] for leg in leg_bodies])
+        # 고관절·무릎·발목 위치. .copy() 필수: d.xanchor[j]는 MjData 메모리를 가리키는 '창'이라 두면 마지막 값으로 바뀜
+        rec["legs"].append([[d.xanchor[j].copy() for j in leg] for leg in leg_joints])
         # 발바닥 앞끝(발가락)·뒤끝(뒤꿈치): 발 상자 중심 ± 발 방향 × 반길이
         axes = [d.geom_xmat[g].reshape(3, 3)[:, 0] * m.geom_size[g, 0] for g in foot_geoms]
         rec["toe"].append([d.geom_xpos[g] + a for g, a in zip(foot_geoms, axes)])
@@ -192,20 +208,28 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
                 break
             viewer.sync()
             time.sleep(max(0.0, W.CONTROL_DT - (time.perf_counter() - t0)))   # 실제 시간 속도로
-        if np.arccos(np.clip(rot[2, 2], -1, 1)) > W.FALL_TILT or d.xpos[info["base_body"], 2] < W.FALL_HEIGHT:
+        if np.arccos(np.clip(rot[2, 2], -1, 1)) > W.FALL_TILT or d.xpos[info["base_body"], 2] < sp.fall_height:
             fell = True
             break
     rec = {k: np.asarray(v) for k, v in rec.items()}
-    rec["raw_contact"] = rec["foot"][:, :, 2] < W.FOOT_CONTACT_Z
-    rec["contact"], rec["taps"] = merge_taps(rec["raw_contact"], rec["foot"][:, :, 2])
+    rec["raw_contact"] = rec["foot"][:, :, 2] < sp.foot_contact_z
+    rec["contact"], rec["taps"] = merge_taps(rec["raw_contact"], rec["foot"][:, :, 2], sp.foot_contact_z)
     rec["fell"] = fell
     rec["dt"] = W.CONTROL_DT
+    rec["gait_period"] = sp.gait_period
     return rec
 
 
-def merge_taps(contact, foot_z):
-    """발을 TAP_HEIGHT보다 낮게 살짝 들었다 다시 닿은 구간은 '계속 딛고 있음'으로 합친다 (걸음 수를 바르게 세려고).
-    돌려주는 값: (합친 접촉, 발마다 튕긴 횟수)."""
+def _sagittal_joints(joint_names) -> list[str]:
+    """옆에서 본 다리의 굽힘 관절 (고관절 pitch, 무릎, 발목) 이름 뒷부분. 로봇마다 발목 이름이 다름."""
+    names = {n.split("_", 1)[1] for n in joint_names if n.startswith("left_")}
+    return [j for j in ("hip_pitch", "knee", "ankle_pitch", "ankle") if j in names]
+
+
+def merge_taps(contact, foot_z, contact_z: float = 0.035):
+    """발을 살짝(TAP_HEIGHT × 로봇 크기) 들었다 다시 닿은 구간은 '계속 딛고 있음'으로 합친다 (걸음 수를 바르게 세려고).
+    로봇 크기는 접촉 판정 높이로 가늠 (simple_biped 0.035 m 기준). 돌려주는 값: (합친 접촉, 발마다 튕긴 횟수)."""
+    tap_height = TAP_HEIGHT * contact_z / 0.035
     contact = contact.copy()
     taps = [0, 0]
     for i in range(2):
@@ -216,7 +240,7 @@ def merge_taps(contact, foot_z):
             if not len(down):
                 break
             b = a + down[0]                                       # 다시 닿는 순간
-            if foot_z[a:b, i].max() - ground < TAP_HEIGHT:
+            if foot_z[a:b, i].max() - ground < tap_height:
                 c[a:b] = True
                 taps[i] += 1
     return contact, taps
@@ -229,18 +253,21 @@ def si(left, right) -> float:
     return float(100 * abs(left - right) / mean) if mean > 1e-9 else 0.0
 
 
-def leg_asymmetry_deg(q, half: int) -> float:
-    """좌우 다리 동작 차이 [°]: 왼다리 관절 각도 vs 반 박자(half 스텝) 전 오른다리 (그리고 반대)의 RMS.
+def leg_asymmetry_deg(q, half: int, left=(0, 1, 2), right=(3, 4, 5), sign=(1.0, 1.0, 1.0)) -> float:
+    """좌우 다리 동작 차이 [°]: 왼다리 관절 각도 vs 반 박자(half 스텝) 전 오른다리 × 좌우 부호 (그리고 반대)의 RMS.
     TensorBoard walk/leg_asymmetry_deg, walk_mjx의 symmetry 보상과 같은 정의."""
     if len(q) <= half:
         return 0.0
+    left, right, sign = list(left), list(right), np.asarray(sign)
     now, before = q[half:], q[:-half]
-    diff = np.concatenate([now[:, :3] - before[:, 3:], now[:, 3:] - before[:, :3]], axis=1)
+    diff = np.concatenate([now[:, left] - sign * before[:, right], now[:, right] - sign * before[:, left]], axis=1)
     return float(np.degrees(np.sqrt(np.mean(np.square(diff)))))
 
 
-def gait_metrics(rec: dict, joint_names) -> dict:
-    """run_episode 기록 → 걸음 수치. 좌우 비교와 절뚝임 점수(대칭 지수 평균) 포함 (analyze_gait.py 설명 참고)."""
+def gait_metrics(rec: dict, info: dict) -> dict:
+    """run_episode 기록 → 걸음 수치. 좌우 비교와 절뚝임 점수(대칭 지수 평균) 포함 (analyze_gait.py 설명 참고).
+    info: 재생기의 runner.info (정책 관절 이름, 좌우 짝·부호)"""
+    joint_names = info["joint_names"]
     t, c, foot, dt = rec["t"], rec["contact"], rec["foot"], rec["dt"]
     steady = t >= min(STEADY_FROM, t[-1] / 2)       # 일찍 넘어진 에피소드도 계산되도록
     per_side, touchdowns = {}, {}
@@ -270,8 +297,9 @@ def gait_metrics(rec: dict, joint_names) -> dict:
         per_side[side][f"{joint}_torque_Nm"] = float(np.abs(tau[:, j]).mean())
 
     L, R = per_side["left"], per_side["right"]
+    joints = [n.split("_", 1)[1] for n in joint_names if n.startswith("left_")]
     symmetry = {k: si(L[k], R[k]) for k in ("step_length_m", "stance_s", "swing_s", "clearance_m",
-                                            "hip_pitch_range_deg", "knee_range_deg", "ankle_pitch_range_deg")}
+                                            *[f"{j}_range_deg" for j in joints])}
     # 박자: 왼발 착지 → 오른발 착지까지가 한 주기의 몇 %인가 (번갈아 걸으면 50 %)
     phase = []
     for a, b in zip(touchdowns["left"][:-1], touchdowns["left"][1:]):
@@ -292,7 +320,8 @@ def gait_metrics(rec: dict, joint_names) -> dict:
         "body_height_range_m": float(np.ptp(base[steady, 2])),
         "left": L, "right": R, "symmetry_index_pct": symmetry,
         "limp_score_pct": float(np.mean(list(symmetry.values()))),
-        "leg_asymmetry_deg": leg_asymmetry_deg(q, round(0.5 * walk_mjx.GAIT_PERIOD / dt)),
+        "leg_asymmetry_deg": leg_asymmetry_deg(q, round(0.5 * rec["gait_period"] / dt), info["mirror_left"],
+                                               info["mirror_right"], info["mirror_sign"]),
     }
 
 

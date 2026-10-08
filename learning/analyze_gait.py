@@ -28,15 +28,14 @@ from pathlib import Path
 import mujoco
 import numpy as np
 # walk_tools를 walk_mjx(→ JAX)보다 먼저: JAX가 CPU를 쓰도록 설정함 (학습 중인 GPU와 겹치지 않게)
-from walk_tools import (LATEST, STEADY_FROM, MujocoRunner, gait_metrics, load_policy, run_episode, si,
-                        summary_lines)
+from walk_tools import (LATEST, STEADY_FROM, _sagittal_joints, gait_metrics, load_policy, make_runner, run_episode,
+                        si, summary_lines)
 
 from biped_sim import paths
-from biped_sim.envs.walk_mjx import GAIT_PERIOD
 
 MAX_TAPS = 2               # --run에서 '좋은 걸음'으로 인정하는 발 튕김 횟수 (정상 상태 8초 동안)
 FRAME_W, FRAME_H = 480, 360
-SIDE, FRONT = dict(azimuth=90, elevation=-5, distance=1.5), dict(azimuth=180, elevation=-5, distance=1.5)
+SIDE, FRONT = dict(azimuth=90, elevation=-5), dict(azimuth=180, elevation=-5)   # 거리는 로봇별 (WalkSpec.view_distance)
 COLORS = {"left": "tab:blue", "right": "tab:red"}   # 로봇 다리 색과 같게 (왼쪽 파랑, 오른쪽 빨강)
 TILE_W = 300               # 연속 사진 한 칸 너비 (화면 가운데의 로봇 부분만 잘라 냄)
 
@@ -49,7 +48,8 @@ def record_with_frames(runner, policy):
         cam = mujoco.MjvCamera()
         cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
         cam.trackbodyid = runner.info["base_body"]
-        cam.distance, cam.azimuth, cam.elevation = view["distance"], view["azimuth"], view["elevation"]
+        cam.distance = runner.spec.view_distance   # 로봇 크기에 맞춰 (simple_biped 1.5 m, 오리 1.0 m)
+        cam.azimuth, cam.elevation = view["azimuth"], view["elevation"]
         cams.append(cam)
     frames = []
 
@@ -69,13 +69,13 @@ def record_with_frames(runner, policy):
 
 # ---------------------------------------------------------------------------- 그림
 def stride_window(rec):
-    """정상 상태의 한 주기(GAIT_PERIOD = 0.8 s): t ≥ 6 s 이후 첫 왼발 착지부터 (착지가 없으면 6.0 s부터)."""
+    """정상 상태의 한 주기(걸음 박자, simple_biped 0.8 s): t ≥ 6 s 이후 첫 왼발 착지부터 (착지가 없으면 6.0 s부터)."""
     c, t = rec["contact"][:, 0], rec["t"]
     start = min(6.0, t[-1] / 2)
     td = np.flatnonzero(c[1:] & ~c[:-1]) + 1
     td = td[t[td] >= start]
     a = int(td[0]) if len(td) else int(np.searchsorted(t, start))
-    return a, min(a + round(GAIT_PERIOD / rec["dt"]), len(t) - 1)
+    return a, min(a + round(rec["gait_period"] / rec["dt"]), len(t) - 1)
 
 
 @functools.lru_cache(maxsize=1)
@@ -128,7 +128,14 @@ def save_video(frames, rec, path, fps):
     proc.wait()
 
 
-def save_plots(rec, metrics, names, title, path):
+def _side_joints(names) -> list[str]:
+    return [n.split("_", 1)[1] for n in names if n.startswith("left_")]
+
+
+def save_plots(rec, metrics, info, title, path):
+    names = info["joint_names"]
+    hip = names.index("left_hip_pitch")    # hip_pitch의 좌우 부호 (오리는 −1)
+    mirror_hip = float(info["mirror_sign"][list(info["mirror_left"]).index(hip)])
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -140,7 +147,8 @@ def save_plots(rec, metrics, names, title, path):
     fig, axes = plt.subplots(3, 3, figsize=(16, 12))
     fig.suptitle(title, fontsize=13)
 
-    for ax, joint in zip(axes[0], ("hip_pitch", "knee", "ankle_pitch")):
+    sagittal = _sagittal_joints(names)   # 옆에서 본 굽힘 관절: 고관절 pitch, 무릎, 발목 (로봇마다 이름이 다름)
+    for ax, joint in zip(axes[0], sagittal):
         for side in ("left", "right"):
             j = names.index(f"{side}_{joint}")
             ax.plot(t[win], np.degrees(rec["q"][win, j]), color=colors[side], label=side)
@@ -171,8 +179,9 @@ def save_plots(rec, metrics, names, title, path):
     ax = axes[1, 2]   # 관절 궤적 고리: 고관절-무릎 각도를 한 평면에. 좌우 고리가 겹치면 대칭
     for side in ("left", "right"):
         jh, jk = names.index(f"{side}_hip_pitch"), names.index(f"{side}_knee")
-        ax.plot(np.degrees(rec["q"][win, jh]), np.degrees(rec["q"][win, jk]), color=colors[side], label=side, lw=1)
-    ax.set_title("hip-knee loop (overlap = symmetric)")
+        sign = mirror_hip if side == "right" else 1.0   # 좌우 부호가 반대인 관절은 뒤집어 같은 그림에
+        ax.plot(sign * np.degrees(rec["q"][win, jh]), np.degrees(rec["q"][win, jk]), color=colors[side], label=side, lw=1)
+    ax.set_title("hip-knee loop (overlap = symmetric" + (", right hip mirrored)" if mirror_hip < 0 else ")"))
     ax.set_xlabel("hip pitch [deg]")
     ax.set_ylabel("knee [deg]")
     ax.legend(loc="upper right")
@@ -201,9 +210,8 @@ def save_plots(rec, metrics, names, title, path):
             ("stance time [s]", L["stance_s"], R["stance_s"], S["stance_s"]),
             ("swing time [s]", L["swing_s"], R["swing_s"], S["swing_s"]),
             ("foot clearance [cm]", 100 * L["clearance_m"], 100 * R["clearance_m"], S["clearance_m"]),
-            ("hip range [deg]", L["hip_pitch_range_deg"], R["hip_pitch_range_deg"], S["hip_pitch_range_deg"]),
-            ("knee range [deg]", L["knee_range_deg"], R["knee_range_deg"], S["knee_range_deg"]),
-            ("ankle range [deg]", L["ankle_pitch_range_deg"], R["ankle_pitch_range_deg"], S["ankle_pitch_range_deg"]),
+            *[(f"{j} range [deg]", L[f"{j}_range_deg"], R[f"{j}_range_deg"], S[f"{j}_range_deg"])
+              for j in _side_joints(names)],
             ("steps (taps)", f"{L['touchdowns']} ({L['taps']})", f"{R['touchdowns']} ({R['taps']})",
              si(L["touchdowns"], R["touchdowns"]))]
     fmt = lambda v: v if isinstance(v, str) else f"{v:.2f}"  # noqa: E731
@@ -229,17 +237,16 @@ def print_report(m):
           f"좌우 기울기 평균 {m['body_roll_mean_deg']:+.1f}° (흔들림 {m['body_roll_range_deg']:.1f}°), "
           f"높이 흔들림 {100 * m['body_height_range_m']:.1f} cm")
     print(f"  {'':22s} {'왼쪽':>8s} {'오른쪽':>8s} {'좌우 차이':>9s}")
+    joints = [k[:-len("_range_deg")] for k in L if k.endswith("_range_deg")]
     for label_, key, scale in (("걸음 길이 [cm]", "step_length_m", 100), ("디딤 시간 [s]", "stance_s", 1),
                                ("흔듦(공중) 시간 [s]", "swing_s", 1), ("발 높이 [cm]", "clearance_m", 100),
-                               ("고관절 범위 [°]", "hip_pitch_range_deg", 1), ("무릎 범위 [°]", "knee_range_deg", 1),
-                               ("발목 범위 [°]", "ankle_pitch_range_deg", 1)):
+                               *[(f"{j} 범위 [°]", f"{j}_range_deg", 1) for j in joints]):
         print(f"  {label_:22s} {scale * L[key]:8.2f} {scale * R[key]:8.2f} {S[key]:8.0f} %")
     print(f"  {'걸음 수 (튕김 제외)':22s} {L['touchdowns']:8d} {R['touchdowns']:8d}"
           + (f"   ⚠ 발 튕김 왼발 {L['taps']}회, 오른발 {R['taps']}회 (착지 후 살짝 떴다 다시 닿음)"
              if L["taps"] + R["taps"] else ""))
-    print(f"  {'평균 각도 고관절/무릎/발목 [°]':22s} "
-          f"{L['hip_pitch_mean_deg']:+.0f}/{L['knee_mean_deg']:+.0f}/{L['ankle_pitch_mean_deg']:+.0f}   "
-          f"{R['hip_pitch_mean_deg']:+.0f}/{R['knee_mean_deg']:+.0f}/{R['ankle_pitch_mean_deg']:+.0f}")
+    print(f"  {'평균 각도 [°] ' + '/'.join(joints):22s} " + "/".join(f"{L[f'{j}_mean_deg']:+.0f}" for j in joints)
+          + "   " + "/".join(f"{R[f'{j}_mean_deg']:+.0f}" for j in joints))
     print(f"  좌우 다리 동작 차이 (반 박자 어긋나게 비교한 관절 각도 RMS) {m['leg_asymmetry_deg']:.1f}°")
     print(f"  ▶ 절뚝임 점수 {m['limp_score_pct']:.1f} % (좌우 차이 평균. 5 % 미만 대칭, 15 % 이상 눈에 띄게 절뚝임)")
 
@@ -258,8 +265,8 @@ def compare_checkpoints(run_dir: Path) -> Path | None:
     for ck in ckpts:
         policy, config = load_policy(ck)
         if runner is None:   # 같은 실행의 체크포인트는 설정이 같으므로 재생기는 하나만 만들어 재사용
-            runner = MujocoRunner(config["target_speed"])
-        m = gait_metrics(run_episode(runner, policy), runner.info["joint_names"])
+            runner = make_runner(config)
+        m = gait_metrics(run_episode(runner, policy), runner.info)
         taps = m["left"]["taps"] + m["right"]["taps"]
         ok = (not m["fell"] and abs(m["speed_mps"] - config["target_speed"]) <= 0.05 and m["both_air_pct"] < 5
               and taps <= MAX_TAPS)
@@ -302,7 +309,7 @@ def main():
 
     params_path = args.params.resolve()
     policy, config = load_policy(params_path)
-    runner = MujocoRunner(config["target_speed"])
+    runner = make_runner(config)
     run = Path(config["run_dir"]).name if config.get("run_dir") else params_path.stem   # 미리 학습된 정책은 파일 이름
     step = config.get("saved_step")
     name = f"{run}_{step if step is not None else 'unknown'}"
@@ -311,12 +318,12 @@ def main():
 
     print(f"정책: {params_path} (학습 스텝 {step}) → {out}")
     rec, frames = (run_episode(runner, policy), []) if args.no_video else record_with_frames(runner, policy)
-    metrics = gait_metrics(rec, runner.info["joint_names"])
+    metrics = gait_metrics(rec, runner.info)
     metrics.update({"params": str(params_path), "run": run, "step": step,
                     "reward_weights": config.get("reward_weights")})
     print_report(metrics)
     (out / "gait.json").write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
-    save_plots(rec, metrics, runner.info["joint_names"], f"{name}  (simulator: MuJoCo)", out / "gait.png")
+    save_plots(rec, metrics, runner.info, f"{name}  (robot: {runner.spec.name}, simulator: MuJoCo)", out / "gait.png")
     if frames:
         save_filmstrip(frames, rec, out / "filmstrip.png")
         save_video(frames, rec, out / "walk.mp4", fps=round(1 / runner.W.CONTROL_DT))

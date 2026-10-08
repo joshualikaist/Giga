@@ -17,6 +17,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+CONTROL_DT = 0.02                     # [s] 보행 정책 제어 주기 (walk_mjx.CONTROL_DT)
 KEY_ENTER, KEY_KP_ENTER = 257, 335   # GLFW 키 번호. MuJoCo 뷰어는 글자 키를 거의 다 단축키로 써서 Enter를 씀
 GAIT_WINDOW_S = 4.0                   # 발 접촉 그래프에 보여 줄 최근 시간 [s]
 DRAW_EVERY = 5                        # 제어 스텝 5번(0.1 s)마다 화면 글자·그래프 갱신
@@ -116,12 +117,12 @@ def gait_target(t: np.ndarray, period: float) -> tuple[np.ndarray, np.ndarray]:
 
 
 class Dashboard:
-    def __init__(self, W, config: dict, run_dir: Path | None, mode: str = "graphs"):
-        """W: biped_sim.envs.walk_mjx 모듈 (제어 주기·걸음 박자 상수), mode: 'graphs' | 'robot'"""
-        self.W = W
+    def __init__(self, spec, config: dict, run_dir: Path | None, mode: str = "graphs"):
+        """spec: 로봇의 보행 과제 (walk_mjx.WalkSpec: 걸음 박자, 접촉 판정 높이), mode: 'graphs' | 'robot'"""
+        self.spec = spec
         self.mode = mode
         self.reloads = 0
-        self.gait = deque(maxlen=round(GAIT_WINDOW_S / W.CONTROL_DT))   # (t, 왼발 접촉, 오른발 접촉)
+        self.gait = deque(maxlen=round(GAIT_WINDOW_S / CONTROL_DT))     # (t, 왼발 접촉, 오른발 접촉)
         self.set_policy(config, run_dir, reloaded=False)
         self.figs = {name: make_figure(title, xlabel, yfmt) for name, title, xlabel, yfmt in [
             ("reward", "Episode reward (eval)", "million steps", "%.0f"),
@@ -163,7 +164,7 @@ class Dashboard:
 
     def on_step(self, viewer, state: dict) -> None:
         """walk_tools.run_episode가 제어 스텝마다 호출. state = {t, vx, distance, foot_z}"""
-        contact = state["foot_z"] < self.W.FOOT_CONTACT_Z
+        contact = state["foot_z"] < self.spec.foot_contact_z
         self.gait.append((state["t"], bool(contact[0]), bool(contact[1])))
         self._k += 1
         if self._k % DRAW_EVERY == 0:
@@ -231,7 +232,7 @@ class Dashboard:
             return
         g = np.array(self.gait, dtype=np.float32)
         t, left, right = g[:, 0], g[:, 1], g[:, 2]
-        want_l, want_r = gait_target(t, self.W.GAIT_PERIOD)
+        want_l, want_r = gait_target(t, self.spec.gait_period)
         # MuJoCo는 번호가 작은 선을 위에 그림 (실측) → 실제 발 선을 0·1번에 두어 흐린 목표 선 위로 보이게
         set_line(fig, 0, "left foot", t, 1.15 + 0.7 * left, LEFT)
         set_line(fig, 1, "right foot", t, 0.15 + 0.7 * right, RIGHT)
@@ -260,7 +261,7 @@ class Dashboard:
 
         fig = self.figs["speed"]
         xs, ys = series("walk/forward_speed_mps")
-        target = float(self.config.get("target_speed", self.W.TARGET_SPEED))
+        target = float(self.config.get("target_speed", self.spec.target_speed))
         set_line(fig, 0, "target", list(x_range), [target, target], DIM)
         set_line(fig, 1, "measured", xs, ys, PALETTE[2])
         fig.linepnt[2:] = 0
@@ -268,7 +269,7 @@ class Dashboard:
 
         # 보상 항목: 최근 값의 크기가 큰 6개만 (색은 항목마다 고정)
         fig = self.figs["terms"]
-        names = list(self.W.REWARD_WEIGHTS)
+        names = list(self.config.get("reward_weights") or self.spec.reward_weights)
         terms = [(n, series(f"eval/episode_reward/{n}")) for n in names if s.get(f"eval/episode_reward/{n}")]
         terms = sorted(terms, key=lambda item: -abs(item[1][1][-1]))[:6]
         all_y = []

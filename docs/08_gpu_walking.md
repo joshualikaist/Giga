@@ -25,6 +25,9 @@ python learning/train_walk_gpu.py --init-from <정책.pkl> --reward heading=-5 -
 
 # GPU 학습 없이 다듬어 둔 걸음 바로 보기
 python learning/play_walk.py --view --params learning/pretrained/walk_policy.pkl
+
+# 다른 로봇: 오픈소스 오리 로봇 (docs/09 §6)
+python learning/train_walk_gpu.py --robot open_duck_mini
 ```
 
 ### 학습 화면 (`--watch` = `play_walk.py --live`)

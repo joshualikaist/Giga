@@ -33,15 +33,7 @@ def env():
 
 def test_reset_and_standing_with_zero_action(env):
     """행동 0 = PD로 home 자세 유지 → 1초 동안 넘어지지 않고, 관측이 유한하고, 보상 항목이 기록된다."""
-    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
-    assert state.obs.shape == (walk_mjx.OBS_SIZE,)
-    step = jax.jit(env.step)
-    for _ in range(50):
-        state = step(state, jnp.zeros(walk_mjx.ACTION_SIZE))
-    assert float(state.done) == 0.0
-    assert np.all(np.isfinite(np.asarray(state.obs)))
-    height = float(state.pipeline_state.xpos[env.base_body, 2])
-    assert height == pytest.approx(walk_mjx.NOMINAL_HEIGHT, abs=0.03)
+    state = _stands_with_zero_action(env)
     for name in walk_mjx.REWARD_WEIGHTS:
         assert f"reward/{name}" in state.metrics
     for name in walk_mjx.GAIT_METRICS:  # 보상과 별개로 늘 기록하는 걸음 지표
@@ -51,11 +43,28 @@ def test_reset_and_standing_with_zero_action(env):
     assert float(state.metrics["gait/flight"]) == 0.0
 
 
+def _stands_with_zero_action(env):
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    assert state.obs.shape == (env.spec.obs_size,)
+    step = jax.jit(env.step)
+    for _ in range(50):
+        state = step(state, jnp.zeros(env.spec.n))
+    assert float(state.done) == 0.0
+    assert np.all(np.isfinite(np.asarray(state.obs)))
+    height = float(state.pipeline_state.xpos[env.base_body, 2])
+    assert height == pytest.approx(env.spec.nominal_height, abs=0.05 * env.spec.nominal_height)
+    return state
+
+
 def test_cpu_mujoco_runner_matches_mjx_observation(env):
-    """learning/play_walk.py의 일반 MuJoCo 재생기가 학습 환경과 '같은 관측'을 만드는지 (sim-to-sim의 전제)."""
+    _cpu_runner_matches_mjx(env)
+
+
+def _cpu_runner_matches_mjx(env):
+    """learning/walk_tools.py의 일반 MuJoCo 재생기가 학습 환경과 '같은 관측'을 만드는지 (sim-to-sim의 전제)."""
     from walk_tools import MujocoRunner
 
-    runner = MujocoRunner(target_speed=env.target_speed)
+    runner = MujocoRunner(env.spec, env.target_speed)
     obs_cpu = runner.reset()
     # MJX 환경을 같은 상태(home, 잡음 없음)에서 시작
     state = env.reset(jax.random.PRNGKey(0))
@@ -66,11 +75,24 @@ def test_cpu_mujoco_runner_matches_mjx_observation(env):
     np.testing.assert_allclose(obs_cpu, obs_mjx, atol=1e-4)
 
     # 같은 행동을 넣고 한 스텝 진행해도 비슷해야 함 (시뮬레이터 구현 차이 수준)
-    action = np.full(walk_mjx.ACTION_SIZE, 0.2, dtype=np.float32)
+    action = np.full(env.spec.n, 0.2, dtype=np.float32)
     obs_cpu = runner.step(action)
     state = env.step(state.replace(pipeline_state=data), jnp.asarray(action))
-    np.testing.assert_allclose(obs_cpu[:3], np.asarray(state.obs)[:3], atol=1e-2)       # 중력 방향
-    np.testing.assert_allclose(obs_cpu[10:16], np.asarray(state.obs)[10:16], atol=1e-2)  # 관절 각도
+    n = env.spec.n
+    np.testing.assert_allclose(obs_cpu[:3], np.asarray(state.obs)[:3], atol=1e-2)               # 중력 방향
+    np.testing.assert_allclose(obs_cpu[10:10 + n], np.asarray(state.obs)[10:10 + n], atol=1e-2)  # 관절 각도
+
+
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_open_duck_walk_env():
+    """오리 보행 환경: 다리 10개만 정책, 머리는 PD로 고정. 행동 0으로 서 있고, 일반 MuJoCo 재생기와 관측이 같다.
+    좌우 부호표는 FK로 자동 계산: hip yaw·roll·pitch는 반대(−1), knee·ankle은 같음(+1) (docs/09)."""
+    duck = walk_mjx.BipedWalkMjxEnv("open_duck_mini")
+    assert duck.spec.obs_size == 43 and duck.spec.n == 10
+    assert list(np.asarray(duck.mirror_sign)) == [-1.0, -1.0, -1.0, 1.0, 1.0]
+    _stands_with_zero_action(duck)
+    _cpu_runner_matches_mjx(duck)
 
 
 def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
@@ -103,7 +125,8 @@ def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
             self.texts = texts
 
     viewer = FakeViewer()
-    dash = Dashboard(walk_mjx, {"target_speed": 0.3, "steps": 3_000_000, "saved_step": 3_000_000}, tmp_path)
+    dash = Dashboard(walk_mjx.SPECS["simple_biped"], {"target_speed": 0.3, "steps": 3_000_000, "saved_step": 3_000_000},
+                     tmp_path)
     dash.start_episode()
     for k in range(10):
         dash.on_step(viewer, {"t": (k + 1) * 0.02, "vx": 0.3, "distance": 0.0, "foot_z": np.array([0.02, 0.08])})
@@ -147,11 +170,11 @@ def test_gait_metrics_merge_taps_and_measure_asymmetry():
 def test_pretrained_walk_policy_walks_symmetrically():
     """learning/pretrained/walk_policy.pkl (docs/08 §6의 결과): 일반 MuJoCo에서 10초 동안 넘어지지 않고
     목표 속도로, 절뚝이지 않고 걷는다."""
-    from walk_tools import MujocoRunner, gait_metrics, load_policy, run_episode
+    from walk_tools import gait_metrics, load_policy, make_runner, run_episode
 
     policy, config = load_policy(LEARNING_DIR / "pretrained" / "walk_policy.pkl")
-    runner = MujocoRunner(config["target_speed"])
-    m = gait_metrics(run_episode(runner, policy), runner.info["joint_names"])
+    runner = make_runner(config)
+    m = gait_metrics(run_episode(runner, policy), runner.info)
     assert not m["fell"]
     assert m["speed_mps"] == pytest.approx(0.30, abs=0.03)
     assert m["both_air_pct"] < 5

@@ -20,7 +20,7 @@ import json
 import time
 from pathlib import Path
 
-from walk_tools import (LATEST, MjxRunner, MujocoRunner, find_run_dir, gait_metrics, load_policy, run_episode,
+from walk_tools import (LATEST, find_run_dir, gait_metrics, get_spec, load_policy, make_runner, run_episode,
                         summary_lines)
 
 from biped_sim import passive_viewer, track_body_camera
@@ -37,31 +37,29 @@ def main():
                         help="mujoco: 일반 MuJoCo (ROS2 sim_node와 같은 시뮬레이터) / mjx: 학습과 같은 GPU 시뮬레이터")
     args = parser.parse_args()
 
-    from biped_sim.envs import walk_mjx
     params_path = args.params.resolve()
     if params_path.exists():
         policy, config = load_policy(params_path)
     elif args.live:  # 학습을 막 시작함: 첫 정책이 저장될 때까지 행동 0 (PD로 제자리에 서 있음)
-        policy, config = None, {"target_speed": walk_mjx.TARGET_SPEED}
+        policy, config = None, {}
         config_path = params_path.with_name("config.json")
         if params_path.name == "params.pkl" and config_path.exists():  # 학습 설정은 시작하자마자 저장됨
             config = json.loads(config_path.read_text())
         print(f"정책 파일을 기다리는 중: {params_path} (학습 시작 후 약 3~4분)")
     else:
         raise SystemExit(f"정책이 없습니다: {args.params}\n→ 먼저 python learning/train_walk_gpu.py")
-    runner = (MjxRunner if args.backend == "mjx" else MujocoRunner)(config["target_speed"])
-    joint_names = runner.info["joint_names"]
-    print(f"정책: {args.params} | 목표 속도 {config['target_speed']} m/s | 시뮬레이터: {args.backend}")
+    runner = make_runner(config, args.backend)
+    print(f"정책: {args.params} | 로봇 {runner.spec.name} | 목표 속도 {runner.target_speed} m/s | 시뮬레이터: {args.backend}")
 
     if not (args.view or args.live):
-        print("\n".join(summary_lines(gait_metrics(run_episode(runner, policy), joint_names))))
+        print("\n".join(summary_lines(gait_metrics(run_episode(runner, policy), runner.info))))
         print("영상·그래프·좌우 비교: python learning/analyze_gait.py --params " + str(args.params))
         return
 
     from live_dashboard import Dashboard  # 같은 learning/ 폴더
 
     loaded_mtime = params_path.stat().st_mtime if policy is not None else None
-    dash = Dashboard(walk_mjx, config, find_run_dir(params_path, config), mode="graphs" if args.live else "robot")
+    dash = Dashboard(get_spec(config), config, find_run_dir(params_path, config), mode="graphs" if args.live else "robot")
     print("화면 재생: 넘어지거나 10초가 지나면 처음부터 다시. Enter = 그래프 ↔ 로봇 화면 전환. "
           "종료: 창 닫기 또는 Ctrl+C")
     if args.live:
@@ -70,7 +68,9 @@ def main():
         # 설정 패널은 숨김 (그래프와 겹치지 않게). 창에서 Tab / Shift+Tab으로 켤 수 있음
         with passive_viewer(runner.model, runner.data, show_ui=False, key_callback=dash.key_callback) as viewer:
             with viewer.lock():
-                track_body_camera(runner.info["base_body"], distance=2.5, azimuth=120, elevation=-15)(viewer)
+                # 로봇 크기에 맞춘 거리 (simple_biped 2.5 m, 오리 약 1.7 m)
+                track_body_camera(runner.info["base_body"], distance=1.67 * runner.spec.view_distance,
+                                  azimuth=120, elevation=-15)(viewer)
             episode = 0
             while viewer.is_running():
                 if args.live and params_path.exists() and params_path.stat().st_mtime != loaded_mtime:
@@ -86,7 +86,7 @@ def main():
                 print(f"[에피소드 {episode}]" + ("" if policy is not None else " (첫 정책 기다리는 중: 행동 0)"))
                 dash.start_episode()
                 rec = run_episode(runner, policy, viewer, on_step=lambda state: dash.on_step(viewer, state))
-                print("\n".join(summary_lines(gait_metrics(rec, joint_names))))
+                print("\n".join(summary_lines(gait_metrics(rec, runner.info))))
                 time.sleep(0.5)
     except KeyboardInterrupt:
         print("\nCtrl+C — 종료합니다.")

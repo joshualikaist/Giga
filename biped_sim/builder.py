@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import mujoco
+import numpy as np
 
 from .utils import lowest_collision_z
 
@@ -66,6 +67,9 @@ class SimConfig:
     mesh_dir: str | Path | None = None
     # 이 바디들만 충돌 계산 (예: 발). None = 전부. CAD 메시를 그대로 충돌시키면 느리고 부품끼리 가짜 접촉이 생김
     collision_bodies: tuple[str, ...] | None = None
+    # {붙일 바디: 모양을 따올 바디} — 따올 바디의 충돌 형상(메시 등)을 감싸는 상자를 붙일 바디의 좌표계로 만들어 붙인다.
+    # CAD 메시 발 대신 상자 발로 충돌 (GPU 학습 속도, 접촉 안정성). 붙일 바디는 보통 발바닥 기준점 (docs/09)
+    collision_boxes: dict[str, str] | None = None
 
     add_floor: bool = True
     add_imu: bool = True
@@ -149,7 +153,10 @@ def build_robot_spec(urdf_path: str | Path, cfg: SimConfig | None = None) -> muj
             if g.contype != 0 or g.conaffinity != 0:
                 g.group = COLLISION_GROUP
                 g.rgba = [0.9, 0.6, 0.1, 0.4]  # 켜서 볼 때 반투명 주황색
-    # ⑤-b 지정한 바디만 충돌 (나머지는 보이기만 함)
+    # ⑤-b 메시를 감싸는 상자 충돌 형상 (보이지 않게 그룹 3)
+    if cfg.collision_boxes:
+        _add_collision_boxes(spec, cfg.collision_boxes)
+    # ⑤-c 지정한 바디만 충돌 (나머지는 보이기만 함)
     if cfg.collision_bodies is not None:
         for g in geoms:
             if g.parent.name not in cfg.collision_bodies:
@@ -209,6 +216,39 @@ def _add_environment(spec: mujoco.MjSpec) -> None:
     spec.worldbody.add_light(name="sun", pos=[0, 0, 3], dir=[0, 0, -1],
                              type=mujoco.mjtLightType.mjLIGHT_DIRECTIONAL,
                              diffuse=[0.6, 0.6, 0.6], castshadow=True)
+
+
+def _add_collision_boxes(spec: mujoco.MjSpec, boxes: dict[str, str]) -> None:
+    """source 바디의 충돌 형상 꼭짓점을 target 바디 좌표계로 옮겨 감싸는 상자(축 정렬)를 target에 붙인다.
+    두 바디는 고정 관절로 이어져 있어야 한다 (관절이 있으면 자세에 따라 상자가 달라지므로)."""
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_kinematics(model, data)
+    for target, source in boxes.items():
+        t_id, s_id = model.body(target).id, model.body(source).id
+        rot_t, pos_t = data.xmat[t_id].reshape(3, 3), data.xpos[t_id]
+        points = []
+        for g in range(model.ngeom):
+            if model.geom_bodyid[g] != s_id or not (model.geom_contype[g] or model.geom_conaffinity[g]):
+                continue
+            rot_g = data.geom_xmat[g].reshape(3, 3)
+            if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH:
+                mesh = model.geom_dataid[g]
+                local = model.mesh_vert[model.mesh_vertadr[mesh]:model.mesh_vertadr[mesh] + model.mesh_vertnum[mesh]]
+            elif model.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX:
+                from .utils import _BOX_CORNER_SIGNS
+                local = _BOX_CORNER_SIGNS * model.geom_size[g]
+            else:
+                raise ValueError(f"collision_boxes: {source}의 geom 종류 {model.geom_type[g]}는 지원하지 않음 (mesh/box만)")
+            points.append((data.geom_xpos[g] + local @ rot_g.T - pos_t) @ rot_t)   # world → target 좌표계
+        if not points:
+            raise ValueError(f"collision_boxes: {source}에 충돌 형상이 없습니다")
+        points = np.concatenate(points)
+        lo, hi = points.min(axis=0), points.max(axis=0)
+        geom = spec.body(target).add_geom(name=f"{target}_box", type=mujoco.mjtGeom.mjGEOM_BOX,
+                                          size=(hi - lo) / 2, pos=(hi + lo) / 2)
+        geom.group = COLLISION_GROUP
+        geom.rgba = [0.9, 0.6, 0.1, 0.4]
 
 
 def _add_home_keyframe(spec: mujoco.MjSpec, cfg: SimConfig) -> None:
