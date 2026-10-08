@@ -39,6 +39,9 @@ FALL_HEIGHT = 0.35          # [m]
 FOOT_CONTACT_Z = 0.035      # [m] 발목(발 바디 원점) 높이가 이보다 낮으면 '발이 땅에 닿음'으로 판단
 OBS_SIZE = 31
 ACTION_SIZE = 6
+HALF_PERIOD_STEPS = round(GAIT_PERIOD / 2 / CONTROL_DT)   # 반 박자 = 20 제어 스텝 (symmetry 보상용 기록 길이)
+MIN_STEP_AIR = 0.1          # [s] 이만큼 이상 공중에 있다가 착지해야 '한 걸음' (step_length 보상).
+                            #   없으면 발을 살짝 튕겨 두 번 착지해 보상을 두 번 받는 꼼수를 배움 (실측, docs/08 §6)
 
 REWARD_WEIGHTS = {
     "forward_velocity": 2.0,    # exp(−(vx − 목표)² / 0.05): 목표 속도에 가까울수록 최대 1
@@ -53,11 +56,15 @@ REWARD_WEIGHTS = {
     "flight": -1.0,             # 두 발이 모두 공중이면 1 : 뛰지 말고 걷기
     "gait_phase": 1.0,          # 걸음 박자대로 좌우 발이 번갈아 딛으면 1 (두 발 평균)
     "heading": 0.0,             # (방향 각도)² : 처음 방향(+x)을 유지하기. 기본 0 = 꺼짐 (docs/08 §5 실험)
+    "symmetry": 0.0,            # Σ(왼다리 관절 − 반 박자 전 오른다리 관절)² + 반대 [rad²] : 두 다리가 같은 동작을
+                                #   반 박자 어긋나게 하기 (절뚝임 방지). 기본 0 = 꺼짐 (docs/08 §6)
+    "step_length": 0.0,         # 한 걸음 착지할 때 반대 발보다 앞에 놓은 거리 / 목표 보폭 (목표에서 1, 넘어도 1)
+                                #   (MIN_STEP_AIR 이상 공중에 있던 착지만) (docs/08 §6)
 }
 # flight·gait_phase가 없으면(0으로 두면) 두 발을 다 띄우고 깡충깡충 뛰는 걸음을 배움 (실측, docs/08 §5.1).
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
-GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading")
+GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry")
 
 
 def build_mjx_model() -> tuple[mujoco.MjModel, dict]:
@@ -101,6 +108,7 @@ class BipedWalkMjxEnv(Env):
         self.mj_model, info = build_mjx_model()
         self.mx = mjx.put_model(self.mj_model)
         self.target_speed = target_speed
+        self.step_target = max(target_speed * GAIT_PERIOD / 2, 0.05)   # 목표 보폭 [m] = 속도 × 반 박자 (0.3 → 0.12 m)
         self.n_substeps = round(CONTROL_DT / PHYSICS_DT)
         self.qpos_idx = jnp.asarray(info["qpos_idx"])
         self.qvel_idx = jnp.asarray(info["qvel_idx"])
@@ -139,6 +147,7 @@ class BipedWalkMjxEnv(Env):
             "last_action": jnp.zeros(6),
             "time": jnp.zeros(()),
             "feet_air_time": jnp.zeros(2),
+            "q_hist": jnp.tile(qpos[self.qpos_idx], (HALF_PERIOD_STEPS, 1)),   # 최근 20스텝 관절 각도 [0]=직전
         }
         metrics = {f"reward/{k}": jnp.zeros(()) for k in REWARD_WEIGHTS}
         metrics.update({f"gait/{k}": jnp.zeros(()) for k in GAIT_METRICS})
@@ -180,6 +189,18 @@ class BipedWalkMjxEnv(Env):
         air_reward = jnp.sum((air_time - 0.2) * first_contact)
         info["feet_air_time"] = jnp.where(contact, 0.0, air_time)
 
+        # --- 좌우 대칭: 지금 왼다리 관절 각도 vs 반 박자 전 오른다리 (그리고 반대). 피치 관절이라 좌우 부호가 같음
+        q = data.qpos[self.qpos_idx]
+        q_half = state.info["q_hist"][-1]                    # 반 박자(20스텝) 전
+        asym = jnp.sum(jnp.square(q[:3] - q_half[3:])) + jnp.sum(jnp.square(q[3:] - q_half[:3]))
+        info["q_hist"] = jnp.concatenate([q[None], state.info["q_hist"][:-1]])
+
+        # --- 보폭: 착지하는 발이 반대 발보다 얼마나 앞에 놓였나 (목표 보폭에서 최대 1점, 그 이상은 똑같이 1점)
+        foot_x = data.xpos[self.foot_bodies, 0]
+        ahead = foot_x - foot_x[::-1]
+        real_step = first_contact & (air_time >= MIN_STEP_AIR)   # 살짝 튕긴 착지는 걸음이 아님
+        step_reward = jnp.sum(real_step * jnp.clip(ahead, -0.2, self.step_target) / self.step_target)
+
         terms = {
             "forward_velocity": jnp.exp(-jnp.square(vel_world[0] - self.target_speed) / 0.05),
             "lateral_velocity": jnp.square(vel_world[1]),
@@ -193,6 +214,8 @@ class BipedWalkMjxEnv(Env):
             "heading": jnp.square(yaw),
             "flight": jnp.where(contact.any(), 0.0, 1.0),
             "gait_phase": self._gait_phase_match(info["time"], contact),
+            "symmetry": asym,
+            "step_length": step_reward,
         }
         weighted = {k: self.reward_weights[k] * v for k, v in terms.items()}
         reward = sum(weighted.values()) * CONTROL_DT          # 스텝 길이로 나눠 에피소드 합이 '초당' 의미가 되게
@@ -209,6 +232,7 @@ class BipedWalkMjxEnv(Env):
             "gait/single": (~both & ~none).astype(jnp.float32),      # 한 발만 땅 (걷기의 핵심)
             "gait/phase_match": terms["gait_phase"],                 # 걸음 박자와 일치한 정도
             "gait/abs_heading": jnp.abs(yaw),                        # 처음 방향에서 돌아간 각도 [rad]
+            "gait/leg_asymmetry": asym,                              # 좌우 다리 동작 차이 [rad², 관절 6개 합]
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)

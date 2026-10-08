@@ -5,6 +5,7 @@
 """
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -113,10 +114,51 @@ def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     gait_hist = viewer.figs[3][1]
     assert gait_hist.linepnt[0] == 3                        # 학습 기록의 walk/gait_flight_pct 3개
     gait_fig = viewer.figs[4][1]
-    assert gait_fig.linepnt[2] == 10                        # 왼발 접촉 10스텝
+    assert gait_fig.linepnt[0] == 10                        # 왼발 접촉 10스텝
     dash.key_callback(KEY_ENTER)                            # Enter → 로봇 보기: 발 접촉 그래프 하나만
     dash.key_callback(KEY_ENTER)                            # 뷰어는 키를 뗄 때도 부름 → 무시되어야 함
     assert dash.mode == "robot"
     for k in range(10, 15):
         dash.on_step(viewer, {"foot_z": np.array([0.02, 0.08]), "vx": 0.3}, (k + 1) * 0.02, 0.0)
     assert len(viewer.figs) == 1 and viewer.figs[0][1].title.startswith("Feet:")
+
+
+def test_analyze_gait_merges_taps_and_measures_asymmetry():
+    """learning/analyze_gait.py: 살짝 튕긴 착지는 걸음으로 세지 않고, 좌우 다리 차이는 반 박자 어긋나게 비교한다."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "learning"))
+    from analyze_gait import leg_asymmetry_deg, merge_taps
+
+    # 발 높이: 땅(0.02) → 크게 들기(0.10, 걸음) → 땅 → 살짝 들기(0.025, 튕김) → 땅
+    z = np.array([0.02] * 5 + [0.10] * 5 + [0.02] * 5 + [0.025] * 2 + [0.02] * 5)
+    foot_z = np.stack([z, np.full_like(z, 0.02)], axis=1)
+    contact = foot_z < 0.022
+    merged, taps = merge_taps(contact, foot_z)
+    assert taps == [1, 0]
+    assert merged[:, 0].sum() == contact[:, 0].sum() + 2      # 튕긴 2스텝이 '딛고 있음'으로 합쳐짐
+    assert not merged[5:10, 0].any()                          # 진짜 걸음(높이 든 구간)은 그대로
+
+    # 오른다리가 왼다리와 똑같은 동작을 반 박자(20스텝) 늦게 하면 차이 0
+    t = np.arange(200) * 0.02
+    left = np.stack([np.sin(2 * np.pi * t / 0.8)] * 3, axis=1)
+    right = np.stack([np.sin(2 * np.pi * (t - 0.4) / 0.8)] * 3, axis=1)
+    assert leg_asymmetry_deg(np.concatenate([left, right], axis=1), 20) < 1e-6
+    assert leg_asymmetry_deg(np.concatenate([left, right + 0.2], axis=1), 20) > 5   # 한쪽만 0.2 rad 치우치면 큼
+
+
+def test_pretrained_walk_policy_walks_symmetrically():
+    """learning/pretrained/walk_policy.pkl (docs/08 §6의 결과): 일반 MuJoCo에서 10초 동안 넘어지지 않고
+    목표 속도로, 절뚝이지 않고 걷는다."""
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "learning"))
+    from analyze_gait import gait_metrics, record
+    from play_walk import MujocoRunner, load_policy
+
+    path = os.path.join(os.path.dirname(__file__), "..", "learning", "pretrained", "walk_policy.pkl")
+    policy, config = load_policy(Path(path).resolve())
+    runner = MujocoRunner(config["target_speed"])
+    rec, _ = record(runner, policy, render=False)
+    m = gait_metrics(rec, runner.info["joint_names"], runner.W.CONTROL_DT)
+    assert not m["fell"]
+    assert m["speed_mps"] == pytest.approx(0.30, abs=0.03)
+    assert m["both_air_pct"] < 5
+    assert m["limp_score_pct"] < 5          # 측정값 2.1 %
+    assert abs(m["yaw_deg"]) < 10

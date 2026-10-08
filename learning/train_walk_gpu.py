@@ -7,6 +7,8 @@
     python learning/train_walk_gpu.py                       # 화면 없이 학습만
     python learning/train_walk_gpu.py --steps 2000000       # 짧게 동작 확인
     python learning/train_walk_gpu.py --reward heading=-1 --name walk_heading   # 보상 바꿔 실험
+    python learning/train_walk_gpu.py --init-from output/learning/walk_<...>/params.pkl \
+        --reward symmetry=-2 --steps 10000000 --name walk_sym                  # 이전 걸음에서 이어서 다듬기
 
 학습 화면 (--watch, = 다른 터미널에서 python learning/play_walk.py --live)
     MuJoCo 창 하나에 학습 그래프와 최신 정책으로 걷는 로봇. Enter 키로 [학습 현황] ↔ [로봇 보기] 전환
@@ -55,6 +57,9 @@ def main():
                         help="보상 가중치 바꾸기 (여러 번 가능). 예: --reward heading=-1.0 --reward flight=-1.0")
     parser.add_argument("--name", default="walk", help="결과 폴더 이름 앞부분 (TensorBoard에서 실행 구분용)")
     parser.add_argument("--output-dir", type=Path, default=RUNS_DIR)
+    parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
+                        help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
+                             "예: output/learning/walk_<...>/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
     parser.add_argument("--watch", action="store_true",
                         help="학습 화면을 함께 띄움 (그래프 + 최신 정책으로 걷는 로봇, Enter로 전환) = play_walk.py --live")
     args = parser.parse_args()
@@ -74,6 +79,8 @@ def main():
     if jax.default_backend() != "gpu":
         print(f"[warn] JAX가 GPU가 아니라 {jax.default_backend()}를 씁니다. 매우 느릴 수 있습니다.")
 
+    if args.init_from and not args.init_from.exists():
+        raise SystemExit(f"--init-from 정책 파일이 없습니다: {args.init_from}")
     overrides = {}
     for item in args.reward:
         name, _, value = item.partition("=")
@@ -83,6 +90,7 @@ def main():
     latest = args.output_dir.resolve() / "walk_latest.pkl"
     config = {
         "run_dir": str(run_dir),
+        "init_from": str(args.init_from.resolve()) if args.init_from else None,
         "target_speed": args.speed, "steps": args.steps, "envs": args.envs, "seed": args.seed,
         "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT,
         "action_scale": walk_mjx.ACTION_SCALE, "reward_weights": {**walk_mjx.REWARD_WEIGHTS, **overrides},
@@ -94,6 +102,8 @@ def main():
     print(f"과제: 앞으로 {args.speed} m/s로 걷기 (넘어지면 끝, 에피소드 최대 10 s)")
     print(f"학습: Brax PPO, {args.steps:,} 스텝, GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
     print(f"보상 가중치: {config['reward_weights']}")
+    if args.init_from:
+        print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
     print(f"실시간 그래프: 다른 터미널(.venv)에서  tensorboard --logdir {args.output_dir}  → http://localhost:6006")
     print("처음 1~3분은 GPU용 코드 컴파일(JIT) 시간이라 출력이 없습니다.")
@@ -128,10 +138,14 @@ def main():
         for k in ("flight", "single", "double", "phase_match"):
             writer.add_scalar(f"walk/gait_{k}_pct", 100.0 * gait[k], step)
         writer.add_scalar("walk/abs_heading_deg", float(np.degrees(gait["abs_heading"])), step)
+        # 좌우 다리 동작 차이: 반 박자 어긋나게 비교한 관절 각도 차이의 RMS [°] (0이면 두 다리가 똑같이 움직임)
+        leg_asym = float(np.degrees(np.sqrt(gait["leg_asymmetry"] / 6)))
+        writer.add_scalar("walk/leg_asymmetry_deg", leg_asym, step)
         writer.flush()
         print(f"  스텝 {step:>11,} / {args.steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
-              f"두 발 공중 {100 * gait['flight']:3.0f}% | 경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
+              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | "
+              f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)
         # 설정(json)을 먼저, 정책(pkl)을 나중에 바꿔야 재생 쪽이 '새 pkl + 옛 json'을 읽는 일이 없음
@@ -140,6 +154,9 @@ def main():
         shutil.copy(run_dir / "config.json", latest.with_suffix(".json"))
         tmp = run_dir / "params.pkl.tmp"
         brax_model.save_params(str(tmp), params)
+        # 평가마다 따로 보관 → 학습 중간의 걸음이 더 좋으면 그것을 골라 쓸 수 있음 (analyze_gait.py --run)
+        (run_dir / "checkpoints").mkdir(exist_ok=True)
+        shutil.copy(tmp, run_dir / "checkpoints" / f"step_{int(step):011d}.pkl")
         shutil.copy(tmp, latest.with_suffix(".pkl.tmp"))
         # 원자적 교체(replace): 재생 쪽이 반쯤 쓰인 파일을 읽지 않게
         latest.with_suffix(".pkl.tmp").replace(latest)
@@ -150,7 +167,7 @@ def main():
         policy_hidden_layer_sizes=tuple(config["policy_hidden"]),
         value_hidden_layer_sizes=tuple(config["value_hidden"]))
 
-    _, params, _ = ppo.train(
+    ppo.train(
         environment=env,
         num_timesteps=args.steps,
         num_envs=args.envs,
@@ -173,9 +190,9 @@ def main():
         seed=args.seed,
         log_training_metrics=True,
         progress_fn=progress,
-        policy_params_fn=save_policy,
+        policy_params_fn=save_policy,   # Brax가 평가 직전마다 부름 (마지막 평가 포함 → 끝난 뒤 따로 저장할 필요 없음)
+        restore_params=brax_model.load_params(str(args.init_from)) if args.init_from else None,
     )
-    save_policy(args.steps, None, params)
     writer.close()
     print(f"\n학습 완료: {time.perf_counter() - t_start:.0f} s")
     print(f"정책 저장: {run_dir / 'params.pkl'}  (최신: {latest})")

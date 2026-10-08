@@ -1,0 +1,44 @@
+{
+  "run_dir": null,
+  "init_from": null,
+  "target_speed": 0.3,
+  "steps": 10000000,
+  "envs": 1024,
+  "seed": 0,
+  "physics_dt": 0.004,
+  "control_dt": 0.02,
+  "action_scale": 0.5,
+  "reward_weights": {
+    "forward_velocity": 2.0,
+    "lateral_velocity": -1.0,
+    "yaw_rate": -0.5,
+    "upright": -2.0,
+    "height": -10.0,
+    "feet_air_time": 2.0,
+    "action_rate": -0.02,
+    "torque": -0.0002,
+    "alive": 0.5,
+    "flight": -1.0,
+    "gait_phase": 1.0,
+    "heading": -3.0,
+    "symmetry": -2.0,
+    "step_length": 5.0
+  },
+  "policy_hidden": [
+    128,
+    128,
+    128
+  ],
+  "value_hidden": [
+    256,
+    256,
+    256
+  ],
+  "saved_step": 8519680,
+  "history": [
+    "1) 기본 보상(gait_phase, flight)으로 처음부터 3,000만 스텝 → 절뚝이는 걸음 (절뚝임 점수 40.6 %)",
+    "2) 이어서 1,000만 스텝: --reward symmetry=-2 --reward step_length=5 → 대칭 4.1 %, 그러나 발 튕김 24회·방향 -18°",
+    "3) 이어서 1,000만 스텝: step_length 꼼수 막음(MIN_STEP_AIR) + --reward heading=-3 → 이 정책 (852만 스텝 체크포인트)",
+    "결과: 절뚝임 2.1 %, 발 튕김 0, 0.30 m/s, 방향 -1°, 옆 흐름 -0.02 m (docs/08 §6)"
+  ]
+}

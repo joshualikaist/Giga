@@ -39,9 +39,15 @@ def load_policy(params_path: Path):
 
     from biped_sim.envs import walk_mjx
 
-    config_path = params_path.with_name("config.json") if params_path.name == "params.pkl" \
-        else params_path.with_suffix(".json")
+    if params_path.name == "params.pkl":                  # 학습 실행 폴더의 최신 정책
+        config_path = params_path.with_name("config.json")
+    elif params_path.parent.name == "checkpoints":        # 실행 폴더/checkpoints/step_<스텝>.pkl
+        config_path = params_path.parent.parent / "config.json"
+    else:                                                 # walk_latest.pkl → walk_latest.json
+        config_path = params_path.with_suffix(".json")
     config = json.loads(config_path.read_text())
+    if params_path.parent.name == "checkpoints":          # 설정 파일의 saved_step은 마지막 저장 기준 → 파일 이름의 스텝으로
+        config["saved_step"] = int(params_path.stem.split("_")[-1])
     networks = ppo_networks.make_ppo_networks(
         walk_mjx.OBS_SIZE, walk_mjx.ACTION_SIZE,
         preprocess_observations_fn=running_statistics.normalize,   # 학습 때 normalize_observations=True

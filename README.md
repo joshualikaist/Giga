@@ -166,7 +166,7 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `24 passed, 8 skipped`. 건너뛴 8개 중 5개는 9단계의 학습 패키지를 설치하면 실행되고(→ `29 passed, 3 skipped`), 3개는 10단계의 GPU 학습 환경에서 따로 실행합니다 (`source scripts/activate_gpu.sh && pytest tests/test_walk_mjx.py`).
+✅ 확인: 마지막 줄에 `24 passed, 10 skipped`. 건너뛴 10개 중 5개는 9단계의 학습 패키지를 설치하면 실행되고(→ `29 passed, 5 skipped`), 5개는 10단계의 GPU 학습 환경에서 따로 실행합니다 (`source scripts/activate_gpu.sh && pytest tests/test_walk_mjx.py`).
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
 
@@ -246,6 +246,20 @@ python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보�
 
 > 학습 화면은 학습과 별도 프로세스이고 GPU를 거의 쓰지 않게 설정되어 있습니다. 창을 닫아도 학습은 계속됩니다.
 > 이 저장소의 MuJoCo 화면은 모두 같은 설정을 쓰지만, 다른 프로그램의 3D 창은 GPU를 최대 96%까지 쓸 수 있으니 학습 중에는 닫아 두세요.
+
+#### 걸음 분석하고 다듬기
+
+학습이 끝나면 걸음을 영상·사진·그래프로 확인하고, 문제가 있으면 보상을 바꿔 **그 정책에서 이어서** 학습합니다.
+
+```bash
+python learning/analyze_gait.py --run output/learning/walk_<날짜_시각>   # 저장된 정책을 모두 비교 → 가장 좋은 걸음을 영상까지 분석
+# → output/gait/<실행>_<스텝>/ 에 walk.mp4(영상), walk_slow.mp4(4배 느리게), filmstrip.png(한 걸음 연속 사진),
+#   gait.png(관절 각도 좌우 비교 그래프), 터미널에 좌우 대칭 수치와 '절뚝임 점수'
+python learning/train_walk_gpu.py --init-from <위에서 고른 정책.pkl> \
+    --reward symmetry=-2 --reward step_length=5 --steps 10000000 --name walk_sym --watch   # 이어서 다듬기 (약 12분)
+```
+
+절뚝이는 걸음을 이렇게 진단하고 고친 실제 과정 → **[docs/08 §6](docs/08_gpu_walking.md#6-걸음-다듬기--보고-진단하고-보상을-바꿔-이어서-학습)**
 
 과제 설계, 보상 항목, 결과 분석, 보상 바꿔 보기 → **[docs/08 GPU 보행 학습](docs/08_gpu_walking.md)**
 
@@ -353,7 +367,9 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── train_walk_gpu.py         ← GPU 보행 학습 (Brax PPO), TensorBoard, 보상 바꾸기(--reward), 학습 화면(--watch)
 │   ├── play_walk.py              ← 보행 정책 학습 화면(--live)·재생(--view)·걸음 분석
 │   ├── live_dashboard.py         ← MuJoCo 창 안의 학습 그래프·발 접촉 그래프 (Enter로 화면 전환)
-│   └── pretrained/balance_ppo.zip ← 미리 학습된 모델
+│   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
+│   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),
+│                                    walk_policy.pkl/.json (다듬은 걸음, docs/08 §6)
 │
 ├── ros2_ws/                      ── ROS2 colcon 워크스페이스 (build/ install/ log/는 git 제외)
 │   └── src/

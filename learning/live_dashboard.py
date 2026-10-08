@@ -21,6 +21,7 @@ KEY_ENTER, KEY_KP_ENTER = 257, 335   # GLFW 키 번호. MuJoCo 뷰어는 글자 
 GAIT_WINDOW_S = 4.0                   # 발 접촉 그래프에 보여 줄 최근 시간 [s]
 DRAW_EVERY = 5                        # 제어 스텝 5번(0.1 s)마다 화면 글자·그래프 갱신
 LOG_REFRESH_S = 2.0                   # 기록 파일 다시 읽는 주기 [s]
+LEFT, RIGHT = (0.35, 0.6, 1.0), (1.0, 0.4, 0.35)   # 로봇 다리 색과 같게 (왼쪽 파랑, 오른쪽 빨강)
 PALETTE = [(0.35, 0.85, 0.45), (1.0, 0.6, 0.2), (0.35, 0.65, 1.0), (1.0, 0.35, 0.35), (0.95, 0.9, 0.3),
            (0.75, 0.5, 1.0), (0.3, 0.9, 0.9), (1.0, 0.55, 0.8), (0.75, 0.75, 0.75), (0.6, 0.9, 0.3),
            (0.9, 0.75, 0.55), (0.55, 0.55, 1.0)]
@@ -132,7 +133,7 @@ class Dashboard:
         gait.xformat = "%.1f"
         gait.flg_ticklabel = (1, 0)   # y축 숫자는 의미 없음 (위 = 왼발, 아래 = 오른발)
         gait.flg_legend = 0           # 칸이 낮아 범례가 한 줄만 보임 → 색 설명은 제목에
-        gait.title = "Feet: L top, R bottom, gray=target"   # 칸 너비를 넘는 제목은 잘림
+        gait.title = "Feet: L(blue) top, R(red) bottom"   # 칸 너비를 넘는 제목은 잘림
         self._last_log = 0.0
         self._k = 0
         self.recent = (0.0, 0.0)   # 최근 4초: 두 발 공중 %, 한 발 %
@@ -236,11 +237,11 @@ class Dashboard:
         g = np.array(self.gait, dtype=np.float32)
         t, left, right = g[:, 0], g[:, 1], g[:, 2]
         want_l, want_r = gait_target(t, self.W.GAIT_PERIOD)
-        # 선은 번호 순서대로 그려짐: 흐린 목표 선을 먼저 → 실제 선이 위에 덮여 겹치는 곳은 밝은 선이 보임
-        set_line(fig, 0, "target L", t, 1.15 + 0.7 * want_l, DIM)
-        set_line(fig, 1, "target R", t, 0.15 + 0.7 * want_r, DIM)
-        set_line(fig, 2, "left foot", t, 1.15 + 0.7 * left, PALETTE[0])
-        set_line(fig, 3, "right foot", t, 0.15 + 0.7 * right, PALETTE[1])
+        # MuJoCo는 번호가 작은 선을 위에 그림 (실측) → 실제 발 선을 0·1번에 두어 흐린 목표 선 위로 보이게
+        set_line(fig, 0, "left foot", t, 1.15 + 0.7 * left, LEFT)
+        set_line(fig, 1, "right foot", t, 0.15 + 0.7 * right, RIGHT)
+        set_line(fig, 2, "target L", t, 1.15 + 0.7 * want_l, DIM)
+        set_line(fig, 3, "target R", t, 0.15 + 0.7 * want_r, DIM)
         fig.linepnt[4:] = 0
         self.recent = (np.mean((left == 0) & (right == 0)) * 100, np.mean(left != right) * 100)
         t_end = max(float(t[-1]), GAIT_WINDOW_S)

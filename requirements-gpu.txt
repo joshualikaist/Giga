@@ -11,6 +11,7 @@ mujoco==3.15.0
 mujoco-mjx==3.15.0
 jax[cuda12]==0.6.2
 brax==0.14.1
+matplotlib==3.10.9      # 걸음 분석 그래프 (learning/analyze_gait.py)
 tensorboardX            # TensorBoard 기록 (보기는 .venv의 tensorboard로: tensorboard --logdir output/learning)
 pytest                  # tests/test_walk_mjx.py 실행용
 numpy<2
