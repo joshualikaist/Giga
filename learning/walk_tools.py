@@ -304,7 +304,9 @@ def gait_metrics(rec: dict, info: dict) -> dict:
         touchdowns[side] = td
         stance = [(lo[lo > a][0] - a) * dt for a in td if np.any(lo > a)]
         swing = [(td[td > a][0] - a) * dt for a in lo if np.any(td > a)]
-        step_len = [foot[a, i, 0] - foot[a, 1 - i, 0] for a in td]     # 착지할 때 반대 발보다 얼마나 앞에
+        # 착지할 때 반대 발보다 얼마나 앞에 — 몸통이 향한 방향으로 잼. world x로 재면 몸이 ψ만큼 돌아 있을 때
+        # 두 발 간격(오리 18 cm) × sin ψ가 한쪽엔 더해지고 다른 쪽엔 빠져 절뚝이는 것처럼 보임 (−20°면 ±6 cm, docs/10 §5)
+        step_len = [(foot[a, i, :2] - foot[a, 1 - i, :2]) @ [np.cos(rec["rpy"][a, 2]), np.sin(rec["rpy"][a, 2])] for a in td]
         on_ground = c[:, i] & steady
         rel_z = rec["foot_rel_z"][:, i]                                 # 그 자리 땅 기준 발 높이
         ground_z = np.median(rel_z[on_ground]) if on_ground.any() else 0.0
