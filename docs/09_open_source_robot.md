@@ -589,6 +589,43 @@ python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --fri
   **무게중심을 디딤 발 쪽으로 옮길수록 줄어듭니다**: 1.2 cm(지금 걸음) → 0.70, 2.4 cm(§8.6 LIPM 상한) → 0.50 N·m (정격 아래).
   §8.6에서 '스타일'이라고 본 좌우 흔들림이, 무게중심 이동만큼은 hip_roll 부담을 덜어 주는 데 필요한 것입니다.
 
+### 9.6 무게중심을 디딤 쪽으로 (`--reward com_over_stance=1.0`)
+
+§9.5의 계산대로라면 한 발로 설 때 무게중심을 디딤 쪽 hip_roll 축으로 2.4 cm 옮기면 hip_roll 정적 토크가 0.90 → 0.50 N·m가 됩니다.
+그래서 그 이동 거리에 점수를 주는 보상 `com_over_stance`를 만들었습니다 (몸통 방향 기준 옆 거리, 2.4 cm에서 만점, 기본 0 = 꺼짐).
+§9.5 정책은 한 발 지지 동안 평균 0.44 cm만 옮기고 있었습니다. 나머지는 §9.5와 같은 조건으로 이어서 2,211만 스텝 (창을 띄워 1시간 47분).
+
+```bash
+python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --friction 0.4 1.0 --terrain rough \
+    --home-knee 0.6 --reward torque=-0.01 --reward com_over_stance=1.0 --steps 20000000 --name duck_com_shift --watch \
+    --init-from output/learning/261009_013514_duck_knee06/checkpoints/step_00022118400.pkl
+```
+
+학습 중 무게중심 이동(TensorBoard `walk/com_shift_cm`)은 0.44 → 1.03 cm로 꾸준히 늘었지만(아직 오르는 중), 기울기 감점(`upright`)도
+−0.24 → −0.48로 두 배가 됐습니다. 토크 감점은 −1.18 → −1.11 (6 % 감소).
+
+| 평지에서 걸음 (실측 서보) | §9.5 (무릎 0.6) | **무게중심 이동** |
+|---|---|---|
+| 한 발 지지 때 무게중심 이동 | 0.4 cm | **1.0 cm** |
+| RMS 토크 hip_roll / hip_pitch / knee / ankle | 0.94 / 0.76 / 0.89 / 0.79 | 0.97 / **0.55** / 0.87 / 0.78 |
+| 데이터시트 한계 밖 hip_roll / knee | 5~8 % / 3~5 % | **10~12 %** / 4~5 % |
+| 몸통 roll 범위 / 앞으로 숙임 / 발끝 벌림(hip_yaw) | 17° / +2.5° / ±9° | 21° / +5.0° / ±13° |
+| 발 들기 / 절뚝임 점수 | 1.3 cm / 11.5 % | 1.1 cm / 11.4 % |
+
+| 10번 중 10초 버팀 (실측 서보) | 1.5 / 1.0 | 1.5 / 0.5 | 2.0 / 1.0 | 2.0 / 0.5 | 합계 |
+|---|---|---|---|---|---|
+| hills·slopes·mixed (30번 중) | 28 → 28 | 29 → 30 | 24 → 24 | 27 → 24 | 108 → 106 |
+| obstacles | 1 → **4** | 3 → **8** | 1 → **4** | 1 → **2** | **6 → 18** |
+
+- **예상은 빗나갔습니다: hip_roll 토크는 줄지 않았습니다** (RMS 0.94 → 0.97, 한계 밖 시간은 오히려 증가).
+  오리는 발목 roll이 없고 발바닥이 평평하게 땅에 붙어 있어서, 디딤 다리의 고관절은 발 위에서 옆으로 거의 움직이지 못합니다.
+  그래서 무게중심을 옆으로 옮기는 방법은 사실상 **몸통을 hip_roll 축으로 기울이는 것**뿐이고 (roll 17 → 21°, 발끝을 더 벌려 9 → 13°,
+  다리 앞뒤 관절로 조금이라도 옆으로 움직이려는 것으로 보임), 몸통을 좌우로 흔드는 데 드는 동적 토크가 정적으로 아낀 만큼을 다시 씁니다.
+  → **hip_roll 부담은 이 로봇 구조(발목 roll 없음)의 한계**에 가깝습니다. 줄이려면 더 센 서보(예: 12 V STS3215, 30 kg·cm)를 hip_roll에 쓰는 등
+  하드웨어 쪽 선택이 필요합니다.
+- **대신 보행은 좋아졌습니다: 장애물 6 → 18번** (특히 미끄러운 1.5: 3 → 8). 발 들기는 오히려 낮아졌으므로(1.1 cm), 발이 턱에 걸려도
+  무게중심이 디딤 발 위에 있어 한 발로 버티며 회복하기 쉬워진 것으로 보입니다 (추정). hip_pitch 토크도 28 % 줄었습니다.
+
 ## 10. 관련 파일
 
 | 파일 | 역할 |
@@ -606,6 +643,7 @@ python learning/train_walk_gpu.py --robot open_duck_mini --servo open_duck --fri
 | `learning/feasibility.py`, `tests/test_walk_mjx.py::test_feasibility_estimates_for_open_duck` | 동역학 한계 계산(토크·턱·경사·속도·흔들림)과 정책 측정 비교 (§8) |
 | `biped_sim/envs/walk_mjx.py` `SERVO_MODELS`·`with_servo`, `friction_range` / `tests/test_walk_mjx.py::test_open_duck_servo_model_and_random_friction` | 서보 모델(ideal / open_duck 실측)과 바닥 마찰 무작위 (§9) |
 | `walk_mjx.with_home_knee` (`--home-knee`) / `tests/test_walk_mjx.py::test_open_duck_home_knee_posture` | 서 있는 자세(무릎 각도) 바꾸기, 기준 높이 자동 (§9.5) |
+| `walk_mjx` `com_over_stance` 보상·`COM_SHIFT_TARGET`·`WalkSpec.hip_roll_joints`, TensorBoard `walk/com_shift_cm` | 한 발 지지 때 무게중심을 디딤 쪽 고관절로 (§9.6) |
 
 출처: [Open_Duck_Mini](https://github.com/apirrone/Open_Duck_Mini) (Apache-2.0),
 [sim2real 메모](https://github.com/apirrone/Open_Duck_Mini/blob/v2/docs/sim2real.md),
