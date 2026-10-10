@@ -40,9 +40,9 @@ def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> 
             runner = make_runner(config, terrain=make_terrain("flat"))   # 지형 격자를 가진 모델
             runner.model.geom_friction[:, 0] = mu                       # 접촉 마찰 = 두 geom 중 큰 값 → 모두
             rows = run_trials(runner, policy, args.kinds, d, args.episodes, args.seed, log=None)
-            cond = f"{d:g} / {mu:.1f}"
+            cond = f"{d:.1f} / {mu:.1f}"
             result["terrain"][cond] = {k: int(sum(ok for ok, _, _ in r)) for k, r in rows.items()}
-            print(f"  [{label}] 험한 정도 {d:g}, 마찰 {mu:.1f}: "
+            print(f"  [{label}] 험한 정도 {d:.1f}, 마찰 {mu:.1f}: "
                   + ", ".join(f"{k} {n}/{args.episodes}" for k, n in result["terrain"][cond].items()), flush=True)
 
     runner = make_runner(config)
@@ -249,8 +249,8 @@ def main():
                                                                 "seed": args.seed, "servo": spec.servo},
                                                  "new": new, "baseline_result": base}, indent=2, ensure_ascii=False))
     try:   # TensorBoard TEXT 탭에서도 보이게 (학습 실행 폴더일 때만. 그림은 상대 경로라 TensorBoard에서는 안 보임)
-        if not any(run_dir.glob("events.out.tfevents*")):
-            raise FileNotFoundError("학습 실행 폴더가 아님")
+        if args.out is not None or not any(run_dir.glob("events.out.tfevents*")):
+            raise FileNotFoundError("학습 실행 폴더의 기본 결과 위치가 아님")   # --out으로 따로 뽑은 평가는 기록하지 않음
         from tensorboardX import SummaryWriter
         writer = SummaryWriter(str(run_dir), filename_suffix=".eval")
         writer.add_text("evaluation", md, global_step=step if isinstance(step, int) else 0)
