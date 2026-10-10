@@ -199,10 +199,12 @@ def main():
         # 좌우 다리 동작 차이: 반 박자 어긋나게 비교한 관절 각도 차이의 RMS [°] (0이면 두 다리가 똑같이 움직임)
         leg_asym = float(np.degrees(np.sqrt(gait["leg_asymmetry"] / spec.n)))
         writer.add_scalar("walk/leg_asymmetry_deg", leg_asym, step)
+        com_shift_cm = 100.0 * gait["com_shift"] / max(gait["single"], 1e-6)   # 한 발 지지 동안 평균
+        writer.add_scalar("walk/com_shift_cm", com_shift_cm, step)
         writer.flush()
         print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
-              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | "
+              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | "
               f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)
