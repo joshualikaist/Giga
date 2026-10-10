@@ -10,6 +10,7 @@ play_walk.py(화면), analyze_gait.py(영상·그래프 분석), 테스트가 �
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
 import json
 import os
@@ -39,7 +40,11 @@ def get_spec(config: dict) -> walk_mjx.WalkSpec:
     """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped, servo 항목이 없음 = ideal,
     home_knee 항목이 없음 = 로봇 설정의 서 있는 자세)."""
     spec = walk_mjx.with_servo(walk_mjx.SPECS[config.get("robot", "simple_biped")], config.get("servo", "ideal"))
-    return spec if config.get("home_knee") is None else walk_mjx.with_home_knee(spec, config["home_knee"])
+    if config.get("home_knee") is not None:
+        spec = walk_mjx.with_home_knee(spec, config["home_knee"])
+    if config.get("gait_period") and config["gait_period"] != spec.gait_period:   # --gait-period로 바꾼 걸음 박자
+        spec = dataclasses.replace(spec, gait_period=config["gait_period"])
+    return spec
 
 
 @functools.lru_cache(maxsize=4)

@@ -28,13 +28,52 @@ from walk_tools import gait_metrics, get_spec, load_policy, make_runner, run_epi
 from biped_sim.terrain import KINDS, make_terrain
 
 GROUPS = ("hip_roll", "hip_pitch", "knee", "ankle", "hip_yaw")   # 토크 표의 관절 순서 (오리)
+# 기본 시험 조건. 이 조건으로 평가했을 때만 챔피언(지금까지 가장 잘 걷는 정책)과 비교·갱신한다 (점수를 견줄 수 있게)
+DEFAULTS = dict(episodes=10, difficulties=[1.5, 2.0], frictions=[1.0, 0.5], kinds=list(KINDS), seed=0)
+CHAMPION_DIR = Path(__file__).resolve().parents[1] / "output" / "learning"
+
+
+# ---------------------------------------------------------------------------- 점수·챔피언
+def walking_score(result: dict, target_speed: float) -> dict:
+    """보행 점수 = 울퉁불퉁한 지형(평지 제외) 전체 시도 중 10초 버틴 비율 [%].
+    합격 조건: 평지에서 모두 버팀, 평지 10초 걸음에서 넘어지지 않음, 속도 목표 ±0.05, 절뚝임 점수 15 % 미만."""
+    rough = [n for t in result["terrain"].values() for k, n in t.items() if k != "flat"]
+    flat = [t["flat"] for t in result["terrain"].values() if "flat" in t]
+    g = result["gait"]
+    problems = []
+    if flat and sum(flat) < len(flat) * result["episodes"]:
+        problems.append(f"평지에서 넘어짐 ({sum(flat)} / {len(flat) * result['episodes']})")
+    if g["fell"]:
+        problems.append("평지 10초 걸음에서 넘어짐")
+    if abs(g["speed_mps"] - target_speed) > 0.05:
+        problems.append(f"속도 {g['speed_mps']:.2f} m/s (목표 {target_speed} ± 0.05 밖)")
+    if g["limp_score_pct"] >= 15:
+        problems.append(f"절뚝임 {g['limp_score_pct']:.0f} %")
+    torque = None
+    if result.get("torque"):
+        torque = float(np.mean([v for grp in GROUPS for v in result["torque"]["flat"][grp]["over_datasheet_pct"]]))
+    return {"score": 100.0 * sum(rough) / max(result["trials_rough"], 1), "passed": not problems, "problems": problems,
+            "datasheet_over_pct": torque}
+
+
+def update_champion(robot: str, params: Path, run: str, step, score: dict) -> tuple[bool, dict | None]:
+    """기본 조건 평가에서 합격했고 점수가 챔피언보다 높으면 챔피언 갱신. (갱신했나, 이전 챔피언)"""
+    path = CHAMPION_DIR / f"champion_{robot}.json"
+    old = json.loads(path.read_text()) if path.exists() else None
+    better = score["passed"] and (old is None or score["score"] > old["score"])
+    if better:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"params": str(params), "run": run, "step": step, **score}, indent=2, ensure_ascii=False))
+    return better, old
 
 
 # ---------------------------------------------------------------------------- 정책 하나 평가
 def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> dict:
     """지형 시험(험한 정도 × 마찰), 평지 걸음 수치, (오리면) 토크. out을 주면 그림·영상도 저장."""
     spec = get_spec(config)
-    result = {"terrain": {}, "gait": None, "torque": None}
+    result = {"terrain": {}, "gait": None, "torque": None, "episodes": args.episodes,
+              "trials_rough": args.episodes * len(args.difficulties) * len(args.frictions)
+                              * len([k for k in args.kinds if k != "flat"])}
     for d in args.difficulties:
         for mu in args.frictions:
             runner = make_runner(config, terrain=make_terrain("flat"))   # 지형 격자를 가진 모델
@@ -134,7 +173,7 @@ def verdict(new: dict, base: dict | None, args, target_speed: float) -> list[str
 
 
 def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, base: dict | None,
-              config: dict, base_config: dict | None, args, spec) -> str:
+              config: dict, base_config: dict | None, args, spec, champion_lines=()) -> str:
     target = config.get("target_speed", spec.target_speed)
     md = [f"# 평가: {run} (학습 스텝 {step:,})" if isinstance(step, int) else f"# 평가: {run}", ""]
     md.append(f"- 정책: `{params}`")
@@ -150,7 +189,7 @@ def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, ba
             if config.get(key) != base_config.get(key):
                 changes.append(f"`{key}` {base_config.get(key)} → {config.get(key)}")
         md.append("- 기준과 달라진 학습 설정: " + ("; ".join(changes) if changes else "없음"))
-    md += ["", "## 판정", ""] + [f"- {line}" for line in verdict(new, base, args, target)]
+    md += ["", "## 판정", ""] + [f"- {line}" for line in (*champion_lines, *verdict(new, base, args, target))]
 
     md += ["", f"## 1. 지형 ({args.episodes}번 중 10초 버팀" + (", 기준 → 새 정책)" if base else ")"), ""]
     md.append("| 험한 정도 / 마찰 | " + " | ".join(args.kinds) + " | 평지 제외 합계 |")
@@ -241,13 +280,28 @@ def main():
         test_config = {**base_config, "servo": config.get("servo", "ideal")}   # 같은 서보 모델에서
         base = evaluate(base_policy, test_config, args, None, label="기준")
 
-    md = report_md(run_dir.name, step, params, baseline, new, base, config, base_config, args, spec)
+    target = config.get("target_speed", spec.target_speed)
+    score = walking_score(new, target)
+    lines = [f"**보행 점수 {score['score']:.1f}** (울퉁불퉁한 지형 {new['trials_rough']}번 중 10초 버팀 비율) — "
+             + ("합격" if score["passed"] else "불합격: " + ", ".join(score["problems"]))]
+    if base is not None:
+        bs = walking_score(base, target)
+        lines.append(f"기준 정책 보행 점수 {bs['score']:.1f}" + ("" if bs["passed"] else " (불합격: " + ", ".join(bs["problems"]) + ")"))
+    is_default = all(getattr(args, k) == v for k, v in DEFAULTS.items())
+    if is_default:
+        updated, old = update_champion(spec.name, params, run_dir.name, step, score)
+        lines.append("🏆 **챔피언 갱신**" + (f" (이전: {old['run']} {old['score']:.1f})" if old else " (첫 챔피언)") if updated
+                     else f"챔피언 유지: {old['run']} {old['score']:.1f}" if old else "챔피언 없음 (불합격)")
+    else:
+        lines.append("기본 조건이 아니라 챔피언과 비교하지 않음")
+    md = report_md(run_dir.name, step, params, baseline, new, base, config, base_config, args, spec, lines)
     (out / "report.md").write_text(md)
     (out / "report.json").write_text(json.dumps({"params": str(params), "baseline": str(baseline) if baseline else None,
                                                  "conditions": {"episodes": args.episodes, "difficulties": args.difficulties,
                                                                 "frictions": args.frictions, "kinds": args.kinds,
                                                                 "seed": args.seed, "servo": spec.servo},
-                                                 "new": new, "baseline_result": base}, indent=2, ensure_ascii=False))
+                                                 "score": score, "new": new, "baseline_result": base},
+                                                indent=2, ensure_ascii=False))
     try:   # TensorBoard TEXT 탭에서도 보이게 (학습 실행 폴더일 때만. 그림은 상대 경로라 TensorBoard에서는 안 보임)
         if args.out is not None or not any(run_dir.glob("events.out.tfevents*")):
             raise FileNotFoundError("학습 실행 폴더의 기본 결과 위치가 아님")   # --out으로 따로 뽑은 평가는 기록하지 않음

@@ -314,6 +314,8 @@ python learning/feasibility.py --params <오리 정책.pkl>      # 한 발 토�
 
 오픈소스 URDF 점검표, 확인 과정, 두 학습 방식 비교, 지형 실험 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
 
+학습 → 자동 평가 → 다음 실험 결정을 Claude가 스스로 반복하는 규칙과 기록 → **[docs/10 자율 학습](docs/10_auto_research.md)**
+
 ### 막혔을 때
 
 | 증상 | 해결 |
@@ -336,6 +338,7 @@ python learning/feasibility.py --params <오리 정책.pkl>      # 한 발 토�
 | [docs/07_learning.md](docs/07_learning.md) | 강화학습 첫 예제: 개념, 실행, 결과 해석, CPU vs GPU |
 | [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기 |
 | [docs/09_open_source_robot.md](docs/09_open_source_robot.md) | 오픈소스 로봇(오리) 불러오기: URDF 점검표, 좌우 부호, 서 있기 |
+| [docs/10_auto_research.md](docs/10_auto_research.md) | 자율 학습: 학습 → 자동 평가 → Claude가 다음 실험 결정, 보행 점수·챔피언, 실험 기록 |
 | [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
 | [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
 
@@ -375,6 +378,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 07_learning.md            ← 강화학습 첫 예제: 밀려도 넘어지지 않기 (PPO), TensorBoard
 │   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기
 │   ├── 09_open_source_robot.md   ← 오픈소스 로봇 불러오기: URDF 점검표, Open Duck Mini 실습
+│   ├── 10_auto_research.md       ← 자율 학습 규칙과 실험 기록 (보행 점수, 챔피언)
 │   └── images/                   ← README의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)

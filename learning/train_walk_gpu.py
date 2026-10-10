@@ -79,6 +79,10 @@ def main():
                              "biped_sim/envs/walk_mjx.py SERVO_MODELS")
     parser.add_argument("--friction", type=float, nargs=2, default=None, metavar=("최소", "최대"),
                         help="환경마다 바닥 마찰 계수를 이 범위에서 무작위로 (기본: 1.0 고정)")
+    parser.add_argument("--gait-period", type=float, default=None, metavar="S",
+                        help="걸음 박자 [s] (오리 기본 0.5). 길면 발을 들어 앞으로 가져올 시간이 늘어 더 높이 들 수 있음 (docs/09 §8.3)")
+    parser.add_argument("--terrain-difficulty", type=float, nargs=2, default=None, metavar=("최소", "최대"),
+                        help="rough 학습 지형의 험한 정도 범위 (기본 0.4 1.2). 시험(1.5, 2.0)에 가깝게 올리면 더 험한 곳을 연습")
     parser.add_argument("--home-knee", type=float, default=None, metavar="RAD",
                         help="서 있는 자세의 무릎 각도 (오리 기본 0.8). 덜 굽히면 한 발 버티는 무릎 토크가 줄어듦 (docs/09 §9.5)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
@@ -111,6 +115,9 @@ def main():
     spec = walk_mjx.with_servo(walk_mjx.SPECS[args.robot], args.servo)
     if args.home_knee is not None:
         spec = walk_mjx.with_home_knee(spec, args.home_knee)
+    if args.gait_period is not None:
+        import dataclasses
+        spec = dataclasses.replace(spec, gait_period=args.gait_period)
     if not spec.robot.urdf.exists():
         raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
     speed = spec.target_speed if args.speed is None else args.speed
@@ -143,7 +150,8 @@ def main():
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
         "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
-                                                        "resolution": 0.08},
+                                                        "resolution": 0.08,
+                                                        "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
         "policy_hidden": [128, 128, 128], "value_hidden": [256, 256, 256],
     }
     (run_dir / "config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False))
@@ -174,7 +182,8 @@ def main():
     if args.terrain == "rough":   # 넓은 지형의 무작위 위치에서 출발. 앞으로 2.5 m는 지형 안이도록
         from biped_sim.terrain import make_training_terrain
         # 격자 8 cm: 4 cm보다 GPU에서 2배 빠름 (발 상자가 검사할 칸이 25 → 9개, 실측 7,800 대 3,850 스텝/s)
-        terrain = make_training_terrain(seed=args.terrain_seed, half_size=6.0, resolution=0.08)
+        terrain = make_training_terrain(seed=args.terrain_seed, half_size=6.0, resolution=0.08,
+                                        difficulty=tuple(args.terrain_difficulty or (0.4, 1.2)))
         spawn_area = ((-5.5, 3.5), (-5.5, 5.5))
     env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
                                    spawn_area=spawn_area, friction_range=args.friction)
@@ -204,10 +213,12 @@ def main():
         writer.add_scalar("walk/leg_asymmetry_deg", leg_asym, step)
         com_shift_cm = 100.0 * gait["com_shift"] / max(gait["single"], 1e-6)   # 한 발 지지 동안 평균
         writer.add_scalar("walk/com_shift_cm", com_shift_cm, step)
+        clearance_cm = 100.0 * gait["clearance"] / max(gait["landing"], 1e-6)  # 걸음마다 흔듦 최고 발 높이 평균
+        writer.add_scalar("walk/foot_clearance_cm", clearance_cm, step)
         writer.flush()
         print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
-              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | "
+              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | 발 들기 {clearance_cm:4.1f} cm | "
               f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)

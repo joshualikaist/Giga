@@ -69,6 +69,8 @@ REWARD_WEIGHTS = {
     "com_over_stance": 0.0,     # 한 발로 설 때 무게중심이 디딤 쪽 고관절(hip_roll 축)로 옮겨 간 거리 / COM_SHIFT_TARGET (0~1).
                                 #   발목 roll이 없는 오리는 hip_roll이 옆 기울기를 혼자 버티므로, 옮길수록 hip_roll 토크가 줄어듦
                                 #   (0 → 0.90, 2.4 cm → 0.50 N·m). 기본 0 = 꺼짐. WalkSpec.hip_roll_joints가 있는 로봇만 (docs/09 §9.6)
+    "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
+                                #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
 }
 COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§8.6 LIPM 상한, hip_roll 정적 토크가 정격 아래로)
 # 보상을 하나씩 더해 온 과정 (simple_biped 실측, docs/08 §5~6):
@@ -77,7 +79,8 @@ COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§
 #   모두 켜고 처음부터 학습 → 대칭으로 걸음 (절뚝임 1.8 %, 좌우 다리 차이 0.8°)
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
-GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry", "com_shift")
+GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry", "com_shift",
+                "landing", "clearance")
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,7 @@ class WalkSpec:
     servo: str = "ideal"                                  # 서보 모델 이름 (SERVO_MODELS, with_servo로 바꿈)
     home_knee: float | None = None                        # 서 있는 자세의 무릎 각도를 바꿨으면 그 값 (with_home_knee)
     hip_roll_joints: tuple[str, str] | None = None        # (왼, 오른) 옆으로 기울이는 고관절 (com_over_stance 보상용)
+    clearance_target: float = 0.05                        # [m] foot_clearance 보상 만점 발 높이 (발 기준점 높이)
 
     @property
     def n(self) -> int:
@@ -146,6 +150,7 @@ SPECS = {
                             roles={"hip_pitch": (1.0, -0.5), "knee": (0.0, 1.0), "ankle": (-1.0, -0.5)}),
         sim_overrides=dict(collision_boxes=_DUCK_FEET, collision_bodies=tuple(_DUCK_FEET)),
         hip_roll_joints=("left_hip_roll", "right_hip_roll"),
+        clearance_target=0.03,   # 장애물 2.75 cm(험한 정도 1.5)를 넘을 높이. §8.3: 흔듦 0.15 s로는 서보 속도상 약 1.7 cm가 한계
     ),
 }
 
@@ -353,6 +358,7 @@ class BipedWalkMjxEnv(Env):
             "last_action": jnp.zeros(n),
             "time": jnp.zeros(()),
             "feet_air_time": jnp.zeros(2),
+            "swing_peak": jnp.zeros(2),       # 이번 흔듦 동안 발을 가장 높이 든 높이 [m] (땅에 닿으면 0)
             "q_hist": jnp.tile(qpos[self.qpos_idx], (self.spec.half_period_steps, 1)),   # 반 박자 동안 관절 각도
         }
         if self.friction_range is not None:
@@ -416,6 +422,9 @@ class BipedWalkMjxEnv(Env):
         foot_x = data.xpos[self.foot_bodies, 0]
         ahead = foot_x - foot_x[::-1]
         real_step = first_contact & (air_time >= self.min_step_air)   # 살짝 튕긴 착지는 걸음이 아님
+        peak = state.info["swing_peak"]                                 # 착지 직전까지의 최고 높이
+        clearance_reward = jnp.sum(real_step * jnp.clip(peak / sp.clearance_target, 0.0, 1.0))
+        info["swing_peak"] = jnp.where(contact, 0.0, jnp.maximum(peak, foot_z))
         step_reward = jnp.sum(real_step * jnp.clip(ahead, -0.2, self.step_target) / self.step_target)
 
         com_shift = self._com_shift(data, yaw, contact)
@@ -437,6 +446,7 @@ class BipedWalkMjxEnv(Env):
             "step_length": step_reward,
             "reference": self._reference_match(q, info["time"]),
             "com_over_stance": jnp.clip(com_shift / COM_SHIFT_TARGET, 0.0, 1.0),
+            "foot_clearance": clearance_reward,
         }
         weighted = {k: self.reward_weights[k] * v for k, v in terms.items()}
         reward = sum(weighted.values()) * CONTROL_DT          # 스텝 길이로 나눠 에피소드 합이 '초당' 의미가 되게
@@ -455,6 +465,8 @@ class BipedWalkMjxEnv(Env):
             "gait/abs_heading": jnp.abs(yaw),                        # 처음 방향에서 돌아간 각도 [rad]
             "gait/leg_asymmetry": asym,                              # 좌우 다리 동작 차이 [rad², 정책 관절 합]
             "gait/com_shift": com_shift,                             # 한 발 지지 때 무게중심 이동 [m] (그 외 0)
+            "gait/landing": jnp.sum(real_step).astype(jnp.float32),  # 이번 스텝에 걸음으로 착지한 발 수
+            "gait/clearance": jnp.sum(real_step * peak),             # 그 착지들의 흔듦 최고 높이 합 [m]
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)
