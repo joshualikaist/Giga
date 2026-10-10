@@ -38,6 +38,7 @@ import argparse
 import functools
 import json
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,8 @@ def main():
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
                         help="이전 학습의 정책에서 이어서 학습 (보상을 바꿔 걸음 다듬기). "
                              "예: output/learning/<YYMMDD_HHMMSS>_walk/params.pkl 또는 .../checkpoints/step_<스텝>.pkl")
+    parser.add_argument("--no-eval", action="store_true",
+                        help="학습이 끝난 뒤 자동 평가(evaluate_walk.py: 지형·토크·걸음, 이전 정책과 비교)를 하지 않음")
     parser.add_argument("--watch", action="store_true",
                         help="학습 화면을 함께 띄움 (그래프 + 최신 정책으로 걷는 로봇, Enter로 전환) = play_walk.py --live")
     args = parser.parse_args()
@@ -261,6 +264,16 @@ def main():
     print(f"정책 저장: {run_dir / 'params.pkl'}  (최신: {latest})")
     print("화면으로 보기:  python learning/play_walk.py --view"
           + ("   (--watch 학습 화면은 마지막 정책을 계속 재생합니다. 창을 닫으면 끝)" if args.watch else ""))
+    if not args.no_eval:   # 자동 평가: 지형 시험·토크·걸음 분석, 이어서 학습했으면 시작 정책과 비교 (CPU, 약 5분)
+        print("\n자동 평가 시작 (약 5분, 끄려면 --no-eval): 지형 시험·토크·걸음, "
+              + ("시작 정책과 비교" if args.init_from else "비교 없이"), flush=True)
+        done = subprocess.run([sys.executable, "-u", str(Path(__file__).with_name("evaluate_walk.py")),
+                               "--params", str(run_dir / "params.pkl")], env={**os.environ, "JAX_PLATFORMS": "cpu"})
+        if done.returncode == 0:
+            print(f"평가 보고서: {run_dir / 'eval' / 'report.md'}  (TensorBoard TEXT 탭에도)")
+        else:
+            print(f"[알림] 자동 평가 실패 (exit {done.returncode}). 따로 실행: python learning/evaluate_walk.py "
+                  f"--params {run_dir / 'params.pkl'}")
 
 
 if __name__ == "__main__":

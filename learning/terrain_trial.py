@@ -28,6 +28,42 @@ from biped_sim import passive_viewer, track_body_camera
 from biped_sim.terrain import KINDS, make_terrain, max_slope_deg
 
 
+def run_trials(runner, policy, kinds, difficulty, episodes, seed=0, viewer=None, log=print, results=None) -> dict:
+    """지형 종류마다 episodes번, 매번 새 지형(시드 seed*1000 + 번호)에서 10초 걸려 보기. 같은 시드면 같은 지형이라
+    정책끼리 공정하게 비교할 수 있다 (evaluate_walk.py). runner는 지형 격자를 가진 모델 (make_runner(config, terrain=...)).
+    결과: {종류: [(10초 버팀, 앞으로 간 거리 [m], 버틴 시간 [s]), ...]} (results를 주면 거기에 채움 → 중간에 멈춰도 남음)"""
+    hfield = runner.model.hfield("terrain").id
+    results = {} if results is None else results
+    for kind in kinds:
+        results.setdefault(kind, [])
+        for ep in range(episodes):
+            terrain = make_terrain(kind, seed=seed * 1000 + ep, difficulty=difficulty)
+            terrain.apply(runner.model)           # 같은 모델에 새 지형 (격자 크기 같음)
+            runner.terrain = terrain
+            show = None
+            if viewer is not None:
+                viewer.update_hfield(hfield)      # 화면에도 새 지형
+                text = f"{kind}  (difficulty {difficulty}, max slope {max_slope_deg(terrain):.0f} deg)\nepisode {ep + 1} / {episodes}"
+
+                def show(state, text=text):
+                    if round(state["t"] / 0.02) % 5 == 0:
+                        viewer.set_texts((mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                                          "terrain\n\ntime\ndistance\nspeed",
+                                          f"{text}\n{state['t']:4.1f} s\n{state['distance']:+.2f} m\n{state['vx']:+.2f} m/s"))
+            rec = run_episode(runner, policy, viewer, on_step=show)
+            fell = rec["fell"]
+            dist = float(rec["base"][-1, 0] - rec["base"][0, 0])
+            results[kind].append((not fell, dist, float(rec["t"][-1])))
+            if log:
+                log(f"  {kind:9s} #{ep + 1}: {'넘어짐 ❌' if fell else '10초 버팀 ✅'}  앞으로 {dist:+.2f} m  "
+                    f"({rec['t'][-1]:.1f} s)  최대 경사 {max_slope_deg(terrain):.0f}°", flush=True)
+            if viewer is not None:
+                if not viewer.is_running():
+                    return results
+                time.sleep(0.8)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--params", type=Path, default=LATEST, help="정책 파일")
@@ -45,43 +81,15 @@ def main():
         config = {**config, "servo": args.servo}
     spec = get_spec(config)
     runner = make_runner(config, terrain=make_terrain("flat"))   # 지형 격자를 가진 모델 (지형은 에피소드마다 바꿔 끼움)
-    hfield = runner.model.hfield("terrain").id
     if args.friction is not None:   # 접촉 마찰 = 두 geom 중 큰 값 → 발·바닥 모두
         runner.model.geom_friction[:, 0] = args.friction
     print(f"정책: {args.params} | 로봇 {spec.name} (서보 {spec.servo}) | 지형 {', '.join(args.kinds)} | 험한 정도 "
           f"{args.difficulty} | 마찰 {runner.model.geom_friction[0, 0]:g} | 종류마다 {args.episodes}번")
 
-    results = {k: [] for k in args.kinds}
+    results = {}
 
     def trial(viewer=None):
-        for kind in args.kinds:
-            for ep in range(args.episodes):
-                seed = args.seed * 1000 + ep
-                terrain = make_terrain(kind, seed=seed, difficulty=args.difficulty)
-                terrain.apply(runner.model)           # 같은 모델에 새 지형 (격자 크기 같음)
-                runner.terrain = terrain
-                hud = {}
-                if viewer is not None:
-                    viewer.update_hfield(hfield)      # 화면에도 새 지형
-                    hud = dict(text=f"{kind}  (difficulty {args.difficulty}, max slope {max_slope_deg(terrain):.0f} deg)"
-                                    f"\nepisode {ep + 1} / {args.episodes}")
-
-                    def show(state, hud=hud):
-                        if round(state["t"] / 0.02) % 5 == 0:
-                            viewer.set_texts((mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
-                                              "terrain\n\ntime\ndistance\nspeed",
-                                              f"{hud['text']}\n{state['t']:4.1f} s\n{state['distance']:+.2f} m\n"
-                                              f"{state['vx']:+.2f} m/s"))
-                rec = run_episode(runner, policy, viewer, on_step=show if viewer is not None else None)
-                fell = rec["fell"]
-                dist = float(rec["base"][-1, 0] - rec["base"][0, 0])
-                results[kind].append((not fell, dist, float(rec["t"][-1])))
-                print(f"  {kind:9s} #{ep + 1}: {'넘어짐 ❌' if fell else '10초 버팀 ✅'}  앞으로 {dist:+.2f} m  "
-                      f"({rec['t'][-1]:.1f} s)  최대 경사 {max_slope_deg(terrain):.0f}°", flush=True)
-                if viewer is not None:
-                    if not viewer.is_running():
-                        return
-                    time.sleep(0.8)
+        run_trials(runner, policy, args.kinds, args.difficulty, args.episodes, args.seed, viewer, results=results)
 
     if args.headless:
         trial()

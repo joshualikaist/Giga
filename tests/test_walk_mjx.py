@@ -159,6 +159,26 @@ def test_feasibility_estimates_for_open_duck():
     assert F.available_torque(np.array([1.0]), np.array([-3.0]), "datasheet")[0] > F.SERVO["stall"]    # 브레이크 방향
 
 
+def test_evaluate_walk_writes_report(tmp_path):
+    """학습 뒤 자동 평가(learning/evaluate_walk.py): 미리 학습된 정책으로 아주 짧게 돌려 보고서(md·json)가 나오는지."""
+    import json
+    import subprocess
+
+    params = LEARNING_DIR / "pretrained" / "walk_policy.pkl"
+    done = subprocess.run([sys.executable, str(LEARNING_DIR / "evaluate_walk.py"), "--params", str(params),
+                           "--no-baseline", "--no-video", "--episodes", "1", "--difficulties", "0.5",
+                           "--frictions", "1.0", "--kinds", "flat", "hills", "--out", str(tmp_path)],
+                          env={**os.environ, "JAX_PLATFORMS": "cpu"}, capture_output=True, text=True, timeout=600)
+    assert done.returncode == 0, done.stderr[-2000:]
+    md = (tmp_path / "report.md").read_text()
+    assert "## 판정" in md and "## 1. 지형" in md and "| 0.5 / 1.0 |" in md
+    result = json.loads((tmp_path / "report.json").read_text())
+    assert set(result["new"]["terrain"]["0.5 / 1.0"]) == {"flat", "hills"}
+    assert result["new"]["gait"]["survived_s"] == pytest.approx(10.0)
+    assert (tmp_path / "gait.png").exists()
+    assert not list(params.parent.glob("events.out.tfevents*"))   # 미리 학습된 정책 폴더에는 TensorBoard 기록을 쓰지 않음
+
+
 def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     """학습 화면(learning/live_dashboard.py): TensorBoard 기록을 직접 읽고, 두 화면 모드에서 그래프·글자를 만든다."""
     import mujoco

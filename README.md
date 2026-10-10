@@ -166,8 +166,8 @@ pytest
 
 창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 20 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(10개, 그 환경에서
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 21 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(11개, 그 환경에서
 `pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
@@ -256,6 +256,7 @@ python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보�
 학습이 끝나면 걸음을 영상·사진·그래프로 확인하고, 문제가 있으면 보상을 바꿔 **그 정책에서 이어서** 학습합니다.
 
 ```bash
+# 학습이 끝나면 자동 평가가 이어서 돕니다 (지형·토크·걸음, 이전 정책과 비교) → <실행 폴더>/eval/report.md (docs/08 §4.1)
 python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # 저장된 정책을 모두 비교 → 가장 좋은 걸음을 영상까지 분석
 # → output/gait/<실행>_<스텝>/ 에 walk.mp4(영상), walk_slow.mp4(4배 느리게), filmstrip.png(한 걸음 연속 사진),
 #   gait.png(관절 각도 좌우 비교 그래프), 터미널에 좌우 대칭 수치와 '절뚝임 점수'
@@ -430,6 +431,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
 │   ├── terrain_trial.py          ← 울퉁불퉁한 지형 실험: MuJoCo 화면에서 에피소드마다 새 지형 (--headless는 통계)
 │   ├── feasibility.py            ← 동역학 한계 계산(토크·턱·경사·속도·흔들림)과 학습한 걸음의 측정 비교 (docs/09 §8)
+│   ├── evaluate_walk.py          ← 학습 뒤 자동 평가: 지형·토크·걸음, 이전 정책과 비교 보고서 (docs/08 §4.1)
 │   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),
 │                                    walk_policy.pkl/.json (다듬은 걸음, docs/08 §6)
 │

@@ -118,6 +118,8 @@ JAX/Brax는 약 65개 패키지를 끌어오고, PyTorch와 같은 NVIDIA 라이
 | `heading` | −3.0 | (방향 각도)² | 처음 방향 유지 (§6) |
 | `symmetry` | −2.0 | Σ(왼다리 관절 각도 − 반 박자 전 오른다리 관절 각도)² + 반대 [rad²] | 두 다리가 같은 동작을 반 박자 어긋나게 (절뚝임 방지, §6) |
 | `step_length` | +5.0 | 한 걸음 착지 때 (반대 발보다 앞에 놓은 거리 / 목표 보폭 0.12 m), 최대 1. 0.1초 이상 공중에 있던 착지만 | 두 발 모두 앞으로 내딛기 (§6) |
+| `reference` | 0 (꺼짐) | 걸음 박자에 맞춘 참고 동작과의 차이로 exp(−…) | 모방 보상 (오리, docs/09 §6) |
+| `com_over_stance` | 0 (꺼짐) | 한 발 지지 때 무게중심이 디딤 쪽 hip_roll 축으로 옮겨 간 거리 / 2.4 cm, 최대 1 | 오리의 hip_roll 부담 (docs/09 §9.6) |
 
 아래 세 항목(`heading`, `symmetry`, `step_length`)은 §6에서 절뚝이는 걸음을 고치며 더한 것입니다.
 §5의 학습들은 이 항목들이 없을 때(0) 한 것입니다.
@@ -172,6 +174,8 @@ TensorBoard (`tensorboard --logdir output/learning` → http://localhost:6006):
 | `walk/gait_flight_pct`, `walk/gait_single_pct`, `walk/gait_double_pct` | **걸음 방식** — 두 발 공중 / 한 발 / 양발로 딛은 시간 비율 [%]. 뛰면 flight가, 걸으면 single이 큼 |
 | `walk/gait_phase_match_pct` | 걸음 박자와 일치한 정도 [%] |
 | `walk/abs_heading_deg` | 처음 방향에서 돌아간 평균 각도 [°] |
+| `walk/com_shift_cm` | 한 발 지지 동안 무게중심이 디딤 쪽 고관절로 옮겨 간 평균 거리 [cm] (오리) |
+| TEXT 탭 `evaluation` | 학습 뒤 자동 평가 보고서 (§4.1) |
 | `training/sps` | 초당 학습 스텝 (속도) |
 | `training/policy_loss`, `v_loss`, `kl_mean`, `entropy_loss` | PPO 내부 값 |
 | `episode/...` | 학습용 환경들의 에피소드 통계 (평가와 비슷하지만 탐색 잡음이 섞임) |
@@ -179,6 +183,27 @@ TensorBoard (`tensorboard --logdir output/learning` → http://localhost:6006):
 CPU 학습(docs/07)과 같은 `output/learning` 폴더에 쌓이므로 TensorBoard 하나로 모두 볼 수 있습니다.
 실행마다 폴더 이름이 `날짜_시각_내용`(예: `261008_103001_walk_v2`, `261008_032517_balance`)이라 Runs가 시간순으로 정렬되고, 골라 비교할 수 있습니다.
 내용 부분은 학습 명령의 `--name`으로 정합니다 (기본 `walk`, `balance`).
+
+### 4.1 학습이 끝나면: 자동 평가 (`evaluate_walk.py`)
+
+학습이 끝나면 `train_walk_gpu.py`가 평가를 자동으로 이어서 합니다 (CPU, 약 5분. 끄려면 `--no-eval`).
+이어서 학습했으면(`--init-from`) **시작 정책과 같은 조건에서 비교**합니다.
+
+| 평가 | 내용 |
+|---|---|
+| 지형 | 평지·언덕·경사로·장애물·섞인 코스 × 험한 정도 1.5, 2.0 × 마찰 1.0, 0.5, 각 10번. 두 정책 모두 같은 지형(같은 시드) |
+| 토크 (오리) | 평지·언덕·장애물에서 관절별 RMS 토크, 서보 데이터시트 한계 밖·정격 초과 시간 (`feasibility.py`, docs/09 §8) |
+| 걸음 | 평지 10초: 속도, 발 들기, 걸음 길이 좌우, 절뚝임 점수, 몸통 흔들림, 방향 틀어짐, 평균 무릎 각도 + 연속 사진·그래프·영상 |
+| 판정 | 평지에서 넘어지는지, 속도가 목표 ±0.05 안인지, 지형 합계·장애물 차이가 **우연(이항분포 2σ)보다 큰지**, 토크·절뚝임 변화 |
+
+결과는 `<실행 폴더>/eval/report.md`(표·그림), `report.json`(모든 수치)이고, TensorBoard의 TEXT 탭(`evaluation`)에도 들어갑니다.
+서보 모델은 새 정책의 것으로 두 정책을 시험하고, 서 있는 자세(`home_knee`)는 정책마다 자기 것을 씁니다.
+
+```bash
+python learning/evaluate_walk.py --params output/learning/<실행>/params.pkl                  # 따로 실행 (기준 = init_from)
+python learning/evaluate_walk.py --params A.pkl --baseline B.pkl                            # 두 정책 비교
+python learning/evaluate_walk.py --params output/learning/<실행>/checkpoints/step_<스텝>.pkl --quick   # 빠르게 (약 40초)
+```
 
 ## 5. 결과 (이 PC 실측)
 
@@ -437,7 +462,8 @@ python learning/train_walk_gpu.py --reward symmetry=-2 --reward step_length=5 --
 | 파일 | 역할 |
 |---|---|
 | `biped_sim/envs/walk_mjx.py` | GPU 보행 환경 (관측·행동·보상·넘어짐), 학습용 모델 생성 |
-| `learning/train_walk_gpu.py` | Brax PPO 학습, TensorBoard 기록, 평가마다 정책 저장(`checkpoints/`) (`--steps`, `--envs`, `--speed`, `--reward`, `--name`, `--watch`, `--init-from`, `--robot`, `--terrain`, `--servo`, `--friction`) |
+| `learning/evaluate_walk.py` | 학습 뒤 자동 평가: 지형·토크·걸음, 이전 정책과 비교 → `<실행>/eval/report.md` (§4.1) |
+| `learning/train_walk_gpu.py` | Brax PPO 학습, TensorBoard 기록, 평가마다 정책 저장(`checkpoints/`) (`--steps`, `--envs`, `--speed`, `--reward`, `--name`, `--watch`, `--init-from`, `--robot`, `--terrain`, `--servo`, `--friction`, `--home-knee`, `--no-eval`) |
 | `learning/play_walk.py` | 학습 화면(`--live`), 재생(`--view`), 화면 없이 걸음 요약, 일반 MuJoCo(기본) 또는 MJX(`--backend mjx`) |
 | `learning/gpu_env.py` | GPU 학습 환경 확인: 다른 환경에서 실행하면 `.venv-mjx`의 파이썬으로 다시 실행 |
 | `learning/walk_tools.py` | 공용 도구: 정책 불러오기, 일반 MuJoCo/MJX 재생기, 한 에피소드 기록, 걸음 수치(절뚝임 점수) |
