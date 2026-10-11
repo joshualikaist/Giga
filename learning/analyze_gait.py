@@ -210,12 +210,13 @@ def save_plots(rec, metrics, info, title, path):
             ("stance time [s]", L["stance_s"], R["stance_s"], S["stance_s"]),
             ("swing time [s]", L["swing_s"], R["swing_s"], S["swing_s"]),
             ("foot clearance [cm]", 100 * L["clearance_m"], 100 * R["clearance_m"], S["clearance_m"]),
-            *[(f"{j} range [deg]", L[f"{j}_range_deg"], R[f"{j}_range_deg"], S[f"{j}_range_deg"])
+            *[(f"{j} range [deg]", L[f"{j}_range_deg"], R[f"{j}_range_deg"], S.get(f"{j}_range_deg"))
               for j in _side_joints(names)],
             ("steps (taps)", f"{L['touchdowns']} ({L['taps']})", f"{R['touchdowns']} ({R['taps']})",
              si(L["touchdowns"], R["touchdowns"]))]
     fmt = lambda v: v if isinstance(v, str) else f"{v:.2f}"  # noqa: E731
-    table = ax.table(cellText=[[r[0], fmt(r[1]), fmt(r[2]), f"{r[3]:.0f}"] for r in rows],
+    # 절뚝임 점수에서 뺀 관절(움직임 3° 미만, walk_tools.MIN_RANGE_DEG)은 diff 칸이 비어 있음
+    table = ax.table(cellText=[[r[0], fmt(r[1]), fmt(r[2]), "- (<3°)" if r[3] is None else f"{r[3]:.0f}"] for r in rows],
                      colLabels=["", "left (blue)", "right (red)", "diff %"], loc="center", cellLoc="center",
                      colWidths=[0.42, 0.2, 0.2, 0.18])
     table.auto_set_font_size(False)
@@ -241,7 +242,8 @@ def print_report(m):
     for label_, key, scale in (("걸음 길이 [cm]", "step_length_m", 100), ("디딤 시간 [s]", "stance_s", 1),
                                ("흔듦(공중) 시간 [s]", "swing_s", 1), ("발 높이 [cm]", "clearance_m", 100),
                                *[(f"{j} 범위 [°]", f"{j}_range_deg", 1) for j in joints]):
-        print(f"  {label_:22s} {scale * L[key]:8.2f} {scale * R[key]:8.2f} {S[key]:8.0f} %")
+        diff = f"{S[key]:8.0f} %" if key in S else "  (절뚝임 점수에서 뺌: 거의 안 움직임)"
+        print(f"  {label_:22s} {scale * L[key]:8.2f} {scale * R[key]:8.2f} {diff}")
     print(f"  {'걸음 수 (튕김 제외)':22s} {L['touchdowns']:8d} {R['touchdowns']:8d}"
           + (f"   ⚠ 발 튕김 왼발 {L['taps']}회, 오른발 {R['taps']}회 (착지 후 살짝 떴다 다시 닿음)"
              if L["taps"] + R["taps"] else ""))

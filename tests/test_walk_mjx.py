@@ -181,6 +181,21 @@ def test_evaluate_walk_writes_report(tmp_path):
     assert not list(params.parent.glob("events.out.tfevents*"))   # 미리 학습된 정책 폴더에는 TensorBoard 기록을 쓰지 않음
 
 
+def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
+    """절뚝임 점수에서 뺀 관절(거의 안 움직임)이 있어도 걸음 그래프·출력이 동작 (2026-10-11 자동 평가가 여기서 멈춘 적 있음)."""
+    from analyze_gait import print_report, save_plots
+    from walk_tools import gait_metrics, load_policy, make_runner, run_episode
+
+    policy, config = load_policy(LEARNING_DIR / "pretrained" / "walk_policy.pkl")
+    runner = make_runner(config)
+    rec = run_episode(runner, policy)
+    m = gait_metrics(rec, runner.info)
+    m["symmetry_index_pct"].pop("knee_range_deg")      # 오리의 hip_yaw처럼 빠진 관절이 있는 상황
+    save_plots(rec, m, runner.info, "test", tmp_path / "gait.png")
+    print_report(m)
+    assert (tmp_path / "gait.png").exists()
+
+
 def test_live_dashboard_reads_tensorboard_log_and_draws(tmp_path):
     """학습 화면(learning/live_dashboard.py): TensorBoard 기록을 직접 읽고, 두 화면 모드에서 그래프·글자를 만든다."""
     import mujoco
