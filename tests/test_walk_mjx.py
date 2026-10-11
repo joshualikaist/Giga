@@ -181,6 +181,28 @@ def test_evaluate_walk_writes_report(tmp_path):
     assert not list(params.parent.glob("events.out.tfevents*"))   # 미리 학습된 정책 폴더에는 TensorBoard 기록을 쓰지 않음
 
 
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_deployable_obs_hides_privileged_values():
+    """실물 관측 모드(--deployable-obs): 몸통 속도·높이 칸이 0이고, 일반 MuJoCo 재생기와 관측이 같으며, 센서 잡음은 학습 환경에만."""
+    import dataclasses
+
+    from walk_tools import get_spec
+
+    spec = get_spec({"robot": "open_duck_mini", "deployable_obs": True})
+    assert spec.deployable_obs and dataclasses.replace(spec, deployable_obs=False) == walk_mjx.SPECS["open_duck_mini"]
+    duck = walk_mjx.BipedWalkMjxEnv(spec)
+    _cpu_runner_matches_mjx(duck)
+    state = jax.jit(duck.reset)(jax.random.PRNGKey(0))
+    state = jax.jit(duck.step)(state, jnp.full(spec.n, 0.3))
+    assert np.all(np.asarray(state.obs[6:10]) == 0.0)                 # 속도(3)·높이(1)
+    noisy = walk_mjx.BipedWalkMjxEnv(spec, obs_noise=True)
+    s1 = jax.jit(noisy.step)(jax.jit(noisy.reset)(jax.random.PRNGKey(0)), jnp.zeros(spec.n))
+    s0 = jax.jit(duck.step)(jax.jit(duck.reset)(jax.random.PRNGKey(0)), jnp.zeros(spec.n))
+    diff = np.abs(np.asarray(s1.obs - s0.obs))
+    assert diff[0:6].max() > 0 and diff[6:10].max() == 0.0             # IMU 칸엔 잡음, 가린 칸은 그대로 0
+
+
 def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
     """절뚝임 점수에서 뺀 관절(거의 안 움직임)이 있어도 걸음 그래프·출력이 동작 (2026-10-11 자동 평가가 여기서 멈춘 적 있음)."""
     from analyze_gait import print_report, save_plots

@@ -70,19 +70,45 @@ def walking_score(result: dict, target_speed: float) -> dict:
     torque = None
     if result.get("torque"):
         torque = float(np.mean([v for grp in GROUPS for v in result["torque"]["flat"][grp]["over_datasheet_pct"]]))
+    push = result.get("push") or {}
     return {"score": 100.0 * sum(rough) / max(result["trials_rough"], 1), "passed": not problems, "problems": problems,
-            "datasheet_over_pct": torque}
+            "datasheet_over_pct": torque, "trials_rough": result["trials_rough"],
+            "push_ok": int(sum(push.values())), "push_trials": len(push) * result["episodes"]}
 
 
-def update_champion(robot: str, params: Path, run: str, step, score: dict) -> tuple[bool, dict | None]:
-    """기본 조건 평가에서 합격했고 점수가 챔피언보다 높으면 챔피언 갱신. (갱신했나, 이전 챔피언)"""
+def beats_champion(new: dict, old: dict | None) -> tuple[bool, str]:
+    """챔피언을 바꿀지 (docs/10 §3). new·old = walking_score 결과 (old에 밀기 시험이 없으면 점수만 봄).
+    ① 합격해야 함 ② 보행 점수가 높으면 바꿈 ③ 보행 점수 차이가 우연 범위(2σ) 안이고 밀기 시험이 우연보다 크게 좋으면 바꿈"""
+    if not new["passed"]:
+        return False, "불합격"
+    if old is None:
+        return True, "첫 챔피언"
+    if new["score"] > old["score"]:
+        return True, "보행 점수가 높음"
+    n = new.get("trials_rough") or 160
+    a, b = old["score"] * n / 100, new["score"] * n / 100
+    score_tie = not _pm(b - a, n, (a + b) / (2 * n))
+    m = new.get("push_trials", 0)
+    if score_tie and m and old.get("push_trials") == m:
+        pa, pb = old["push_ok"], new["push_ok"]
+        if pb > pa and _pm(pb - pa, m, (pa + pb) / (2 * m)):
+            return True, f"보행 점수는 우연 범위 안에서 같고 밀기 시험이 우연보다 크게 좋음 ({pa} → {pb} / {m})"
+    return False, "보행 점수가 낮거나 같음"
+
+
+def update_champion(robot: str, params: Path, run: str, step, score: dict,
+                    champion_push: dict | None = None) -> tuple[bool, dict | None, str]:
+    """기본 조건 평가라면 beats_champion 규칙으로 챔피언 갱신. (갱신했나, 이전 챔피언, 이유)
+    champion_push: 이번 평가에서 기준 정책이 챔피언이었다면 그 밀기 시험 결과 (챔피언 파일에 없을 때 보충)"""
     path = CHAMPION_DIR / f"champion_{robot}.json"
     old = json.loads(path.read_text()) if path.exists() else None
-    better = score["passed"] and (old is None or score["score"] > old["score"])
+    if old is not None and champion_push is not None and "push_ok" not in old:
+        old = {**old, **champion_push}
+    better, why = beats_champion(score, old)
     if better:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"params": str(params), "run": run, "step": step, **score}, indent=2, ensure_ascii=False))
-    return better, old
+    return better, old, why
 
 
 # ---------------------------------------------------------------------------- 정책 하나 평가
@@ -315,9 +341,16 @@ def main():
         lines.append(f"기준 정책 보행 점수 {bs['score']:.1f}" + ("" if bs["passed"] else " (불합격: " + ", ".join(bs["problems"]) + ")"))
     is_default = all(getattr(args, k) == v for k, v in DEFAULTS.items())
     if is_default:
-        updated, old = update_champion(spec.name, params, run_dir.name, step, score)
-        lines.append("🏆 **챔피언 갱신**" + (f" (이전: {old['run']} {old['score']:.1f})" if old else " (첫 챔피언)") if updated
-                     else f"챔피언 유지: {old['run']} {old['score']:.1f}" if old else "챔피언 없음 (불합격)")
+        champion_file = CHAMPION_DIR / f"champion_{spec.name}.json"
+        champ = json.loads(champion_file.read_text()) if champion_file.exists() else None
+        champion_push = None   # 기준 정책이 바로 챔피언이면 이번에 잰 그 밀기 시험 결과를 챔피언 쪽 값으로 씀
+        if base is not None and champ is not None and baseline is not None \
+                and Path(champ["params"]).resolve() == baseline.resolve():
+            bs = walking_score(base, target)
+            champion_push = {"push_ok": bs["push_ok"], "push_trials": bs["push_trials"]}
+        updated, old, why = update_champion(spec.name, params, run_dir.name, step, score, champion_push)
+        lines.append((f"🏆 **챔피언 갱신** — {why}" + (f" (이전: {old['run']} {old['score']:.1f})" if old else ""))
+                     if updated else f"챔피언 유지: {old['run']} {old['score']:.1f} ({why})" if old else f"챔피언 없음 ({why})")
     else:
         lines.append("기본 조건이 아니라 챔피언과 비교하지 않음")
     md = report_md(run_dir.name, step, params, baseline, new, base, config, base_config, args, spec, lines)

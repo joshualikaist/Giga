@@ -75,6 +75,7 @@ REWARD_WEIGHTS = {
     "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
                                 #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
 }
+OBS_NOISE = {"gravity": 0.02, "gyro": 0.05, "joint_pos": 0.01, "joint_vel": 0.5}   # 표준편차 (IMU BNO055, 서보 엔코더·백래시 정도)
 SERVO_DATASHEET = {"stall": 1.91, "noload": 4.4}   # [N·m], [rad/s] STS3215 7.4 V (19.5 kg·cm, 0.238 s/60°) = feasibility.SERVO
 COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§8.6 LIPM 상한, hip_roll 정적 토크가 정격 아래로)
 # 보상을 하나씩 더해 온 과정 (simple_biped 실측, docs/08 §5~6):
@@ -110,6 +111,8 @@ class WalkSpec:
     home_knee: float | None = None                        # 서 있는 자세의 무릎 각도를 바꿨으면 그 값 (with_home_knee)
     hip_roll_joints: tuple[str, str] | None = None        # (왼, 오른) 옆으로 기울이는 고관절 (com_over_stance 보상용)
     clearance_target: float = 0.05                        # [m] foot_clearance 보상 만점 발 높이 (발 기준점 높이)
+    # 실물에서 잴 수 있는 관측만: 몸통 속도(3)·땅 위 높이(1)는 시뮬레이션에서만 아는 값이라 0으로 가림 (오리는 IMU·서보 각도뿐)
+    deployable_obs: bool = False
 
     @property
     def n(self) -> int:
@@ -277,14 +280,16 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
 
 class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
-                 reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None, push=None):
+                 reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None, push=None,
+                 obs_noise: bool = False):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
         reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
         terrain: 울퉁불퉁한 지형 (biped_sim.terrain.Terrain). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다.
         spawn_area: ((x_min, x_max), (y_min, y_max)) — 에피소드마다 이 안의 무작위 위치에서 출발 (넓은 지형의 여러 곳 경험)
         friction_range: (최소, 최대) — 환경마다 바닥 마찰 계수를 이 안에서 무작위로 (None = MuJoCo 기본 1.0).
             Brax의 자동 리셋은 첫 리셋 상태로 되돌리므로 환경마다 학습 내내 같은 값 (1024개 환경이 범위를 골고루 나눠 가짐)
-        push: (최대 속도 [m/s], 간격 [s]) — 간격마다 몸통을 수평 무작위 방향으로 0~최대 속도만큼 툭 밈 (외란 버티기). None = 없음"""
+        push: (최대 속도 [m/s], 간격 [s]) — 간격마다 몸통을 수평 무작위 방향으로 0~최대 속도만큼 툭 밈 (외란 버티기). None = 없음
+        obs_noise: 관측에 센서 잡음 (OBS_NOISE: 중력 방향 0.02, 각속도 0.05 rad/s, 관절 각도 0.01 rad, 관절 속도 0.5 rad/s)"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
         sp = self.spec
         unknown = set(reward_weights or {}) - set(sp.reward_weights)
@@ -292,6 +297,11 @@ class BipedWalkMjxEnv(Env):
             raise ValueError(f"모르는 보상 항목 {sorted(unknown)} (사용 가능: {sorted(sp.reward_weights)})")
         self.reward_weights = {**sp.reward_weights, **(reward_weights or {})}
         self.terrain, self.spawn_area, self.friction_range, self.push = terrain, spawn_area, friction_range, push
+        n = sp.n
+        self.noise_scale = None if not obs_noise else jnp.asarray(np.concatenate([
+            [OBS_NOISE["gravity"]] * 3, [OBS_NOISE["gyro"]] * 3, [0.0] * 4,          # 중력, 각속도, (속도·높이)
+            [OBS_NOISE["joint_pos"]] * n, [0.1 * OBS_NOISE["joint_vel"]] * n,     # 관절 각도, 관절 속도 × 0.1
+            [0.0] * (n + 3)]), dtype=jnp.float32)                                  # 직전 행동, 목표 속도, 박자
         self.mj_model, info = build_mjx_model(sp, terrain)
         self.mx = mjx.put_model(self.mj_model)
         self.target_speed = sp.target_speed if target_speed is None else target_speed
@@ -489,6 +499,10 @@ class BipedWalkMjxEnv(Env):
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)
+        if self.noise_scale is not None:   # 센서 잡음 (학습 때만, 실물 센서처럼)
+            rng, key = jax.random.split(info["rng"])
+            info["rng"] = rng
+            obs = obs + self.noise_scale * jax.random.normal(key, obs.shape)
         return state.replace(pipeline_state=data, obs=obs, reward=reward, done=done,
                              metrics=metrics, info=info)
 
@@ -569,12 +583,14 @@ class BipedWalkMjxEnv(Env):
             ang_body = data.qvel[3:6]
         gravity_body = rot.T @ jnp.array([0.0, 0.0, -1.0])
         phase = 2.0 * jnp.pi * info["time"] / self.spec.gait_period
+        height = data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2]) - self.spec.nominal_height
+        if self.spec.deployable_obs:   # 실물에 없는 센서 값은 0 (MujocoRunner.obs와 같게)
+            vel_body, height = jnp.zeros(3), jnp.zeros(())
         return jnp.concatenate([
             gravity_body,
             ang_body,
             vel_body,
-            jnp.array([data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2])
-                       - self.spec.nominal_height]),
+            jnp.array([height]),
             data.qpos[self.qpos_idx] - self.q_home,
             0.1 * data.qvel[self.qvel_idx],
             info["last_action"],

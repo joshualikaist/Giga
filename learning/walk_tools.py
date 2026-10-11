@@ -45,6 +45,8 @@ def get_spec(config: dict) -> walk_mjx.WalkSpec:
         spec = walk_mjx.with_home_knee(spec, config["home_knee"])
     if config.get("gait_period") and config["gait_period"] != spec.gait_period:   # --gait-period로 바꾼 걸음 박자
         spec = dataclasses.replace(spec, gait_period=config["gait_period"])
+    if config.get("deployable_obs"):                                             # --deployable-obs
+        spec = dataclasses.replace(spec, deployable_obs=True)
     return spec
 
 
@@ -143,9 +145,11 @@ class MujocoRunner:
         d, i = self.data, self.info
         rot = d.xmat[i["base_body"]].reshape(3, 3)
         phase = 2 * np.pi * self.t / self.spec.gait_period
-        return np.concatenate([rot.T @ [0, 0, -1.0], d.qvel[3:6], rot.T @ d.qvel[0:3],
-                               [d.xpos[i["base_body"], 2] - self.ground(*d.xpos[i["base_body"], :2])
-                                - self.spec.nominal_height],
+        vel = rot.T @ d.qvel[0:3]
+        height = d.xpos[i["base_body"], 2] - self.ground(*d.xpos[i["base_body"], :2]) - self.spec.nominal_height
+        if self.spec.deployable_obs:   # 실물에서 잴 수 없는 몸통 속도·높이는 0 (walk_mjx._observation과 같게)
+            vel, height = np.zeros(3), 0.0
+        return np.concatenate([rot.T @ [0, 0, -1.0], d.qvel[3:6], vel, [height],
                                d.qpos[i["qpos_idx"]] - i["q_home"], 0.1 * d.qvel[i["qvel_idx"]],
                                self.last_action, [self.target_speed], [np.sin(phase), np.cos(phase)]]
                               ).astype(np.float32)

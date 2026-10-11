@@ -464,7 +464,7 @@ python learning/train_walk_gpu.py --reward symmetry=-2 --reward step_length=5 --
 |---|---|
 | `biped_sim/envs/walk_mjx.py` | GPU 보행 환경 (관측·행동·보상·넘어짐), 학습용 모델 생성 |
 | `learning/evaluate_walk.py` | 학습 뒤 자동 평가: 지형·토크·걸음, 이전 정책과 비교 → `<실행>/eval/report.md` (§4.1) |
-| `learning/train_walk_gpu.py` | Brax PPO 학습, TensorBoard 기록, 평가마다 정책 저장(`checkpoints/`) (`--steps`, `--envs`, `--speed`, `--reward`, `--name`, `--watch`, `--init-from`, `--robot`, `--terrain`, `--servo`, `--friction`, `--home-knee`, `--gait-period`, `--terrain-difficulty`, `--push`, `--no-eval`) |
+| `learning/train_walk_gpu.py` | Brax PPO 학습, TensorBoard 기록, 평가마다 정책 저장(`checkpoints/`) (`--steps`, `--envs`, `--speed`, `--reward`, `--name`, `--watch`, `--init-from`, `--robot`, `--terrain`, `--servo`, `--friction`, `--home-knee`, `--gait-period`, `--terrain-difficulty`, `--push`, `--deployable-obs`, `--no-eval`) |
 | `learning/play_walk.py` | 학습 화면(`--live`), 재생(`--view`), 화면 없이 걸음 요약, 일반 MuJoCo(기본) 또는 MJX(`--backend mjx`) |
 | `learning/gpu_env.py` | GPU 학습 환경 확인: 다른 환경에서 실행하면 `.venv-mjx`의 파이썬으로 다시 실행 |
 | `learning/walk_tools.py` | 공용 도구: 정책 불러오기, 일반 MuJoCo/MJX 재생기, 한 에피소드 기록, 걸음 수치(절뚝임 점수) |
