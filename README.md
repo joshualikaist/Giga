@@ -1,35 +1,62 @@
 # Giga
 거위 2족보행로봇
 
-**MuJoCo 2족 보행 로봇 시뮬레이터 + ROS2 제어** (교육용 baseline, 패키지 이름 `biped_sim`)
+**MuJoCo 2족 보행 로봇 시뮬레이터 + ROS2 제어 + 강화학습** (교육용 baseline, 패키지 이름 `biped_sim`)
 
 <table>
 <tr>
-<td align="center"><img src="docs/images/mujoco_stand.png" width="380"><br>MuJoCo (물리 시뮬레이션)</td>
-<td align="center"><img src="docs/images/rviz_sim_squat.png" width="380"><br>RViz (ROS2가 보는 로봇) — 제어기가 앉히는 중</td>
+<td align="center"><img src="docs/images/mujoco_stand.png" width="380"><br>MuJoCo에서 서 있는 2족 로봇 (5단계)</td>
+<td align="center"><img src="docs/images/rviz_sim_squat.png" width="380"><br>ROS2 + RViz로 조종 (7단계)</td>
+</tr>
+<tr>
+<td align="center"><img src="docs/images/walk_live_robot.png" width="380"><br>GPU 강화학습으로 걷기를 배우는 중 (10단계)</td>
+<td align="center"><img src="docs/images/duck_terrain_trained.png" width="380"><br>오픈소스 오리 로봇이 장애물 지형을 걷는 모습 (13단계)</td>
 </tr>
 </table>
 
-이 저장소로 할 수 있는 것
-- 2족 로봇을 **MuJoCo**에서 시뮬레이션하고 (서 있기, 밀면 넘어지기, 관절 제어 실험)
-- **강화학습**으로 로봇이 스스로 균형 잡는 법을 배우게 하고 (밀려도 발을 딛어 버티기)
-- 시뮬레이터를 **ROS2**로 조종하고 (토픽으로 관절 명령, RViz로 시각화)
-- 튜토리얼 6개로 MuJoCo를 처음부터 배우기 (`tutorials/`)
+환경: Ubuntu 22.04 + ROS2 Humble + Python 3.10 · 시뮬레이터: MuJoCo 3.15.0 · GPU 학습: NVIDIA GPU (GTX 1650 4 GB에서 확인)
 
-환경: Ubuntu 22.04 + ROS2 Humble + Python 3.10 · 시뮬레이터: MuJoCo 3.15.0 · 진행 상황: [로드맵](docs/00_roadmap.md)
+---
+
+## 이 저장소로 할 수 있는 것
+
+아래 순서대로 하나씩 해 보면 "시뮬레이터에 로봇을 띄우기"부터 "실물 로봇에 올릴 걷기 정책 만들기"까지 따라갈 수 있습니다.
+
+| 단계 | 하는 것 | 이렇게 됩니다 |
+|---|---|---|
+| 1~5 | **MuJoCo**로 2족 로봇 시뮬레이션: 서 있기, 밀면 넘어지기 | 로봇이 무릎을 살짝 굽히고 서 있음 |
+| 6~7 | **ROS2**로 조종: 토픽으로 관절 명령, RViz로 보기 | MuJoCo 창과 RViz 창의 로봇이 똑같이 앉았다 일어섬 |
+| 8 | 자동 점검 (`pytest`) | 시뮬레이션·튜토리얼·ROS2 연동이 모두 정상인지 30초 만에 확인 |
+| 9 | **강화학습 첫 예제**: 밀려도 넘어지지 않기 (CPU 4분) | 학습한 로봇이 스스로 발을 딛어 버팀 |
+| 10 | **GPU로 걷기 학습** (20~35분) + 걸음 분석·다듬기 | 절뚝이던 걸음을 진단하고 고침 |
+| 11~12 | **남이 만든 오픈소스 로봇**(오리 모양 Open Duck Mini) 불러오기와 걷기 | 받은 URDF의 문제를 찾아 보완하고 걷게 함 |
+| 13 | **울퉁불퉁한 지형**: 언덕·경사로·장애물 | 지형에서 연습한 오리는 험한 지형도 걸음 |
+| 14 | **실물 기준 점검**: 서보 토크·속도 한계를 계산하고 맞추기 | 실물 서보가 감당할 수 있는 걸음으로 |
+| 15 | **자동 평가와 자율 학습**: 학습 → 평가 → 다음 실험을 자동으로 | 가장 잘 걷는 정책(챔피언)이 계속 갱신됨 |
+
+### 어디서부터 시작할까
+
+| 하고 싶은 것 | 필요한 것 | 할 단계 |
+|---|---|---|
+| MuJoCo 시뮬레이션을 처음 해 본다 | Ubuntu 22.04 PC | 0 → 5 |
+| ROS2로 로봇을 조종해 본다 | 위 + ROS2 Humble (2단계에서 설치) | 0 → 7 |
+| 강화학습을 맛본다 | 위 (GPU 없어도 됨) | 0 → 5, 9 |
+| 로봇이 걷기를 배우게 한다 | **NVIDIA GPU** | 0 → 5, 10 |
+| 오리 로봇·지형·실물 기준까지 | NVIDIA GPU + 인터넷 (로봇 파일 19 MB) | 0 → 5, 10 → 15 |
+
+처음이면 위에서부터 순서대로 하세요. 각 단계 끝의 **"✅ 확인"** 과 같은 결과가 나오면 다음으로 넘어가면 됩니다.
 
 ---
 
 ## 처음 시작하기 — 아무것도 몰라도 그대로 따라 하면 됩니다
 
-아래 1~8단계의 명령을 **순서대로 하나씩** 복사해서 터미널에 붙여 넣으세요.
-각 단계 끝의 **"✅ 확인"** 과 같은 결과가 나오면 다음 단계로 넘어가면 됩니다.
-처음 한 번은 ROS2 설치 때문에 인터넷 속도에 따라 수십 분이 걸릴 수 있습니다. 두 번째부터는 4단계와 7단계만 하면 됩니다.
+명령을 **순서대로 하나씩** 복사해서 터미널에 붙여 넣으세요.
+처음 한 번은 ROS2 설치 때문에 인터넷 속도에 따라 수십 분이 걸릴 수 있습니다. 두 번째부터는 4단계(환경 켜기)만 하면 됩니다.
 
 ### 0단계. 준비물과 기본 용어
 
 - **Ubuntu 22.04** 가 설치된 PC (다른 버전은 안 됩니다 — ROS2 Humble이 22.04 전용)
-- 인터넷 연결, 관리자(sudo) 비밀번호, 디스크 여유 공간 약 5 GB
+- 인터넷 연결, 관리자(sudo) 비밀번호, 디스크 여유 공간 약 5 GB (GPU 학습까지 하면 약 8 GB)
 
 | 용어 | 뜻 |
 |---|---|
@@ -37,6 +64,7 @@
 | 붙여넣기 | 터미널에서는 `Ctrl` + `Shift` + `V` (그냥 `Ctrl` + `V`는 안 됨) |
 | `#` 뒤의 글 | 설명(주석)입니다. 같이 붙여 넣어도 무시되니 괜찮습니다 |
 | `Ctrl` + `C` | 터미널에서 **실행 중인 프로그램을 멈춤** (복사가 아님) |
+| 정책 (policy) | 강화학습으로 배운 "로봇의 뇌". 센서 값을 받아 관절 명령을 내는 신경망 (`.pkl` 파일) |
 
 ### 1단계. 저장소 받기 (처음 한 번)
 
@@ -103,11 +131,13 @@ python tutorials/t01_hello_mujoco.py      # 상자와 공이 바닥에 떨어지
 python tutorials/t06_biped_stand.py       # 로봇이 바닥에 서 있음
 ```
 
+<img src="docs/images/mujoco_stand.png" width="420">
+
 - 마우스: 왼쪽 드래그 = 회전, 오른쪽 드래그 = 이동, 휠 = 확대
 - **로봇 밀어 보기**: 몸통을 더블클릭 → `Ctrl` 을 누른 채 마우스 오른쪽 버튼으로 드래그
 - 튜토리얼은 t01~t06 순서로 하나씩 해 보세요 → [tutorials/README.md](tutorials/README.md)
 
-✅ 확인: 위 왼쪽 그림처럼 로봇이 무릎을 살짝 굽히고 서 있으면 성공
+✅ 확인: 위 그림처럼 로봇이 무릎을 살짝 굽히고 서 있으면 성공
 
 ### 6단계. ROS2 패키지 빌드 (처음 한 번 + `git pull`로 새 코드를 받았을 때)
 
@@ -138,7 +168,9 @@ ros2 launch giga_description display.launch.py
 ros2 launch giga_sim_ros sim.launch.py controller:=squat
 ```
 
-MuJoCo 창과 RViz 창이 함께 뜨고, 두 창의 로봇이 똑같이 움직이면 성공입니다 (맨 위 그림).
+<img src="docs/images/rviz_sim_squat.png" width="420">
+
+MuJoCo 창과 RViz 창이 함께 뜨고, 두 창의 로봇이 똑같이 움직이면 성공입니다.
 `controller:=stand` 로 바꾸면 가만히 서 있고, `controller:=` 부분을 빼면 제어기 없이 시뮬레이터만 켭니다.
 종료: 터미널에서 `Ctrl` + `C` 또는 MuJoCo 창 닫기 (모든 프로그램이 함께 꺼짐).
 
@@ -164,11 +196,15 @@ ros2 topic pub --once /joint_commands sensor_msgs/msg/JointState "{name: [left_k
 pytest
 ```
 
-창 없이 약 30초 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
+창 없이 약 1분 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 21 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(11개, 그 환경에서
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 23 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(13개, 그 환경에서
 `pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
+
+---
+
+## 강화학습
 
 ### 9단계. (선택) 강화학습 첫 예제 — 로봇이 스스로 균형 잡는 법을 배우기
 
@@ -181,6 +217,10 @@ python learning/evaluate_balance.py --pretrained --view --push 40    # 학습 �
 python learning/evaluate_balance.py --view --push 40 --baseline      # 같은 상황에서 PD만 쓰면 넘어짐
 python learning/train_balance.py                                     # 직접 학습 (CPU 약 4분)
 ```
+
+<img src="docs/images/learning_curve.png" width="460">
+
+*학습 곡선: 학습할수록 밀려도 버티는 시간(위)과 보상(아래)이 오릅니다.*
 
 ✅ 확인: `train_balance.py`가 끝나면 학습 전/후 비교표가 나옵니다 (이 PC 실측)
 
@@ -211,21 +251,18 @@ tensorboard --logdir output/learning
 1. 같은 컴퓨터의 웹 브라우저(Chrome, Firefox 등) 주소창에 **http://localhost:6006** 을 입력합니다.
 2. 위쪽 **SCALARS** 탭에 그래프가 나옵니다. 왼쪽 **Runs**에서 보고 싶은 학습에 체크합니다. 이름은 `날짜_시각_내용` (예: `261008_140644_walk_scratch`)이라 시간순으로 정렬됩니다.
 3. 위쪽 검색칸에 `reward` 를 입력하면 보상 그래프만 모아서 볼 수 있습니다.
-4. 그래프는 30초마다 자동으로 새로 고쳐집니다 (오른쪽 위 ⟳ 버튼으로 바로 새로 고칠 수도 있음).
+4. 걷기 학습(10단계~)이 끝난 뒤의 **자동 평가 보고서**는 **TEXT** 탭에 있습니다 (15단계).
 5. 끄려면 TensorBoard 터미널에서 `Ctrl+C`를 누릅니다.
 
-이 예제(밀기 버티기)에서는 보상 항목별 값(`reward_terms/`), 버틴 시간(`episode/`), 세기별 시험 결과(`eval/`)가 그래프로 나옵니다.
-학습 시작 전에 켜 두어도 되고, 학습 중이나 끝난 뒤에 켜도 같은 그래프가 나옵니다.
-
-### 10단계. (선택, NVIDIA GPU 필요) GPU로 보행 학습
+### 10단계. (선택, NVIDIA GPU 필요) GPU로 걷기 학습
 
 시뮬레이션 자체를 GPU에서 1024개 동시에 돌려(MuJoCo MJX + Brax PPO) **걷기**를 학습합니다. CPU 학습보다 약 13배 빠릅니다.
 ROS2 환경과 섞이지 않도록 **별도 가상환경(`.venv-mjx`)** 을 씁니다.
 
 ```bash
 bash scripts/setup_gpu_learning.sh            # GPU 학습 환경 설치 (처음 한 번, 약 3 GB)
-source scripts/activate_gpu.sh                # ROS를 켜지 않은 새 터미널에서
-python learning/train_walk_gpu.py --watch     # 3,000만 스텝, 약 20~35분 (처음 3~4분은 컴파일) + 학습 화면
+source scripts/activate_gpu.sh                # GPU 학습 환경 켜기 (ROS를 켜지 않은 새 터미널에서)
+python learning/train_walk_gpu.py --watch     # 약 3,200만 스텝, 20~35분 (처음 3~4분은 컴파일) + 학습 화면
 python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보기
 ```
 
@@ -233,30 +270,26 @@ python learning/play_walk.py --view           # 학습이 끝난 뒤 걸음 보�
 
 `--watch`를 붙이면 **학습 화면**(MuJoCo 창)이 함께 열립니다. 창을 한 번 클릭한 뒤 **Enter 키**로 두 화면을 오갑니다.
 
-| 화면 | 보이는 것 |
-|---|---|
-| 학습 현황 (처음 화면) | 양옆에 학습 그래프 4개(보상, 속도, 보상 항목, 걸음 방식 변화), 가운데 위에 발 접촉 그래프, 그 아래에 지금까지 배운 정책으로 걷는 로봇 |
-| 로봇 보기 | 로봇을 크게, 아래에 발 접촉 그래프 |
+<table>
+<tr>
+<td align="center"><img src="docs/images/walk_live_graphs.png" width="420"><br>학습 현황 (처음 화면): 양옆에 학습 그래프, 가운데에 발 접촉과 지금 정책으로 걷는 로봇</td>
+<td align="center"><img src="docs/images/walk_live_robot.png" width="420"><br>로봇 보기 (Enter): 아래는 발 접촉 그래프 (파랑 = 왼발, 빨강 = 오른발, 높으면 딛고 있음)</td>
+</tr>
+</table>
 
-![학습 화면](docs/images/walk_live_graphs.png)
-
-- 로봇은 약 40초마다 새로 배운 정책으로 바뀝니다. 첫 정책이 나오기 전(3~4분)에는 제자리에 서 있습니다.
-- **발 접촉 그래프**에서 위쪽 선은 왼발, 아래쪽 선은 오른발이고, 높으면 그 발이 땅을 딛고 있습니다.
-  좌우가 번갈아 높으면 걷기이고, 둘이 함께 낮으면 두 발이 다 떠 있는 뛰기입니다.
+- 로봇은 학습이 정책을 저장할 때마다(약 40초~2분) 새로 배운 정책으로 바뀝니다. 첫 정책이 나오기 전(3~4분)에는 제자리에 서 있습니다.
+- 발 접촉 그래프에서 좌우가 번갈아 높으면 걷기, 둘이 함께 낮으면 두 발이 다 떠 있는 뛰기입니다.
+- 학습 화면은 학습과 별도 프로그램이라 **창을 닫아도 학습은 계속**되고, 학습이 끝나도 창은 마지막 정책을 계속 재생합니다 (위 글자가 `TRAINING FINISHED`로 바뀜).
 
 ✅ 확인: 학습 출력에서 `버틴 시간 10.00 s / 10 s`, `앞으로 속도 +0.30 m/s`, `두 발 공중 0%` 근처가 되면 넘어지지 않고 목표 속도로 걷는 것입니다.
-더 자세한 그래프는 9단계의 TensorBoard(http://localhost:6006)에서 Runs에서 `…_walk…`를 고르면 됩니다.
-`walk/forward_speed_mps`(속도), `walk/gait_flight_pct`(두 발 공중 비율), `eval/episode_reward/<항목>`(보상 항목별)을 보세요.
 
-> 학습 화면은 학습과 별도 프로세스이고 GPU를 거의 쓰지 않게 설정되어 있습니다. 창을 닫아도 학습은 계속됩니다.
-> 이 저장소의 MuJoCo 화면은 모두 같은 설정을 쓰지만, 다른 프로그램의 3D 창은 GPU를 최대 96%까지 쓸 수 있으니 학습 중에는 닫아 두세요.
+> 요청한 스텝(기본 3,000만)보다 조금 더 돕니다 (Brax가 평가 간격마다 학습 단위로 올림). 시작할 때 실제 스텝 수를 알려 줍니다.
 
 #### 걸음 분석하고 다듬기
 
 학습이 끝나면 걸음을 영상·사진·그래프로 확인하고, 문제가 있으면 보상을 바꿔 **그 정책에서 이어서** 학습합니다.
 
 ```bash
-# 학습이 끝나면 자동 평가가 이어서 돕니다 (지형·토크·걸음, 이전 정책과 비교) → <실행 폴더>/eval/report.md (docs/08 §4.1)
 python learning/analyze_gait.py --run output/learning/<YYMMDD_HHMMSS>_walk   # 저장된 정책을 모두 비교 → 가장 좋은 걸음을 영상까지 분석
 # → output/gait/<실행>_<스텝>/ 에 walk.mp4(영상), walk_slow.mp4(4배 느리게), filmstrip.png(한 걸음 연속 사진),
 #   gait.png(관절 각도 좌우 비교 그래프), 터미널에 좌우 대칭 수치와 '절뚝임 점수'
@@ -264,57 +297,143 @@ python learning/train_walk_gpu.py --init-from <위에서 고른 정책.pkl> \
     --reward heading=-5 --steps 10000000 --name walk_heading --watch   # 예: 방향 유지를 더 강하게 이어서 다듬기 (약 12분)
 ```
 
-절뚝이는 걸음을 이렇게 진단하고 고친 실제 과정 → **[docs/08 §6](docs/08_gpu_walking.md#6-걸음-다듬기--보고-진단하고-보상을-바꿔-이어서-학습)**
+| 처음 배운 걸음: 절뚝임 (절뚝임 점수 40.6 %) | 보상을 고쳐 다듬은 걸음 (2.1 %) |
+|---|---|
+| <img src="docs/images/walk_limp_filmstrip.png" width="420"> | <img src="docs/images/walk_sym_filmstrip.png" width="420"> |
 
-과제 설계, 보상 항목, 결과 분석, 보상 바꿔 보기 → **[docs/08 GPU 보행 학습](docs/08_gpu_walking.md)**
+절뚝이는 걸음을 이렇게 진단하고 고친 실제 과정 → **[docs/08 §6](docs/08_gpu_walking.md#6-걸음-다듬기--보고-진단하고-보상을-바꿔-이어서-학습)**,
+과제 설계·보상 항목·결과 분석 → **[docs/08 GPU 보행 학습](docs/08_gpu_walking.md)**
 
-### 11단계. (선택) 남이 만든 오픈소스 로봇 불러오기 — 오리 로봇 Open Duck Mini
+---
 
-인터넷에서 받은 URDF를 시뮬레이터에 넣을 때 생기는 문제를 실제 로봇으로 확인하고 고칩니다 (4단계 후, 인터넷 필요).
+## 오픈소스 로봇 — 오리 Open Duck Mini v2
+
+여기부터는 직접 만든 로봇이 아니라 **인터넷에서 받은 실제 로봇**(디즈니 BD-X 드로이드를 본뜬 오픈소스 프로젝트, 키 약 42 cm)을 다룹니다.
+실물이 있는 로봇이라, 시뮬레이션에서 배운 걸음을 **실물에 올릴 수 있는지**까지 따져 봅니다. 10단계의 GPU 환경이 필요합니다.
+
+### 11단계. 오리 로봇 불러오기
+
+인터넷에서 받은 URDF를 그대로 시뮬레이터에 넣으면 생기는 문제(메시 경로, 토크 한계, 가짜 접촉 등)를 하나씩 확인하고,
+받은 파일은 고치지 않고 불러올 때 보완합니다.
 
 ```bash
+source scripts/activate.sh
 bash scripts/get_open_duck.sh                   # URDF + 메시 + 라이선스 받기 (처음 한 번, 약 19 MB)
 python tutorials/t07_open_duck.py --headless    # 문제 확인 → 보완 → 좌우 관절 부호 → 서 있기 검증
 python tutorials/t07_open_duck.py               # 뷰어: PD로 서 있는 오리 (Ctrl+오른쪽 드래그로 밀어 보기)
 ```
 
+<img src="docs/images/open_duck_stand.png" width="420">
+
 ✅ 확인: 마지막에 `발 하중 ... = 무게(20.22 N)의 1.000배`, `서 있음 ✅`
 
-![Open Duck Mini](docs/images/open_duck_stand.png)
+오픈소스 URDF를 받을 때의 점검표와 확인 과정 → **[docs/09 §1~5](docs/09_open_source_robot.md)**
 
-받은 파일은 고치지 않고, 불러올 때 보완합니다 (메시 경로, 토크 한계, 충돌 형상 단순화 등).
-
-오리 걷기 학습 (10단계의 GPU 환경에서, 약 40분):
+### 12단계. 오리 걷기 학습
 
 ```bash
 source scripts/activate_gpu.sh
-python learning/train_walk_gpu.py --robot open_duck_mini                                      # 보상만으로
-python learning/train_walk_gpu.py --robot open_duck_mini --reward reference=3 --name duck_ref  # 참고 동작 모방
+python learning/train_walk_gpu.py --robot open_duck_mini --watch            # 평지에서 걷기 (창을 띄우면 약 1시간 20분)
 ```
 
-> 오리를 `--watch`로 학습하면 같은 GPU가 오리의 CAD 메시(삼각형 37만 개)를 계속 그려서 학습이 약 2배 느려집니다 (실측, 그림자·반사를 끈 뒤.
-> 끄기 전에는 4.6배). 창을 닫아도 학습은 계속되고, 다시 보려면 `python learning/play_walk.py --live --params <실행 폴더>/params.pkl`.
+<img src="docs/images/duck_walk1_filmstrip.png" width="760">
 
-울퉁불퉁한 지형(언덕·불규칙한 경사로·장애물) 실험과 지형 학습:
+*처음 배운 오리 걸음 (위: 옆에서, 아래: 앞에서). 오리처럼 좌우로 뒤뚱거리며 걷습니다.*
+
+> 오리는 CAD 메시가 무거워(삼각형 37만 개) `--watch` 창을 띄우면 학습이 약 2배 느려집니다. 창을 닫아도 학습은 계속되고,
+> 다시 보려면 `python learning/play_walk.py --live --params <실행 폴더>/params.pkl`.
+
+두 가지 학습 방식(보상만 / 참고 동작 따라 하기) 비교 → **[docs/09 §6](docs/09_open_source_robot.md)**
+
+### 13단계. 울퉁불퉁한 지형 — 언덕, 불규칙한 경사로, 장애물
+
+평지에서만 배운 오리는 험한 지형에서 10번 중 2~4번만 버팁니다. **지형에서 연습**시키면 달라집니다.
+
+![시험 지형 5종](docs/images/duck_terrain_kinds.png)
+
+*시험 지형 5종 (험한 정도 1.5): 평지, 언덕, 불규칙한 경사로, 장애물, 섞인 코스. 에피소드마다 새로 만들어집니다.*
 
 ```bash
-python learning/terrain_trial.py --params <정책.pkl>          # MuJoCo 화면: 지형마다 새 지형으로 걸려 보기
-python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --init-from <평지 정책.pkl> --steps 20000000
-python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough --servo open_duck --friction 0.4 1.0 \
-    --init-from <지형 정책.pkl> --steps 20000000                # 실물 측정 서보 모델 + 바닥 마찰 무작위 (docs/09 §9)
+python learning/terrain_trial.py --params <정책.pkl> --difficulty 1.0          # MuJoCo 화면: 지형마다 새 지형으로 걸려 보기
+python learning/train_walk_gpu.py --robot open_duck_mini --terrain rough \
+    --init-from <평지 정책.pkl> --watch                                        # 12 × 12 m 울퉁불퉁한 지형에서 이어서 학습
 ```
 
-평지에서만 배운 오리는 험한 지형에서 10번 중 2~4번만 버텼고, 지형에서 더 배운 오리는 10번 모두 버텼습니다 (docs/09 §7).
+✅ 확인: `terrain_trial.py --headless --episodes 10` 결과에서 지형 학습 전보다 `10초 버팀`이 늘어나면 성공
 
-동역학적으로 어디까지 가능한지 계산으로 예상하고, 학습한 걸음이 실제로 쓰는 토크·속도·마찰과 비교:
+지형 만드는 법, 실험 결과 → **[docs/09 §7](docs/09_open_source_robot.md)**
+
+### 14단계. 실물 기준 점검 — 이 걸음을 실물 서보가 감당할까?
+
+시뮬레이션의 모터는 "무엇이든 할 수 있는" 이상적인 모터입니다. 실물 오리의 서보(Feetech STS3215)는 토크와 속도에 한계가 있습니다.
+로봇의 질량·치수와 서보 사양만으로 **물리적으로 어디까지 가능한지 계산**하고, 학습한 걸음이 실제로 쓰는 토크와 비교합니다.
 
 ```bash
-python learning/feasibility.py --params <오리 정책.pkl>      # 한 발 토크, 턱 높이, 경사, 최고 속도, 좌우 흔들림 + 서보 한계선 그래프
+python learning/feasibility.py --params <오리 정책.pkl>     # 한 발 토크, 넘을 수 있는 턱, 경사, 최고 속도, 좌우 흔들림 + 측정 비교
 ```
 
-오픈소스 URDF 점검표, 확인 과정, 두 학습 방식 비교, 지형 실험 → **[docs/09 오픈소스 로봇 불러오기](docs/09_open_source_robot.md)**
+<img src="docs/images/duck_torque_speed.png" width="760">
 
-학습 → 자동 평가 → 다음 실험 결정을 Claude가 스스로 반복하는 규칙과 기록 → **[docs/10 자율 학습](docs/10_auto_research.md)**
+*점 = 걸으면서 쓴 토크와 관절 속도. 실선(데이터시트)·점선(실측 모델) 바깥의 점은 실물 서보가 낼 수 없는 토크입니다.*
+
+이 점검에서 나온 것을 학습 옵션으로 반영합니다 (자세한 내용과 실험 결과는 [docs/09 §8~9](docs/09_open_source_robot.md)):
+
+| 옵션 | 뜻 |
+|---|---|
+| `--servo open_duck` | 실측 서보 모델: 빨리 돌수록 토크가 줄어듦 |
+| `--friction 0.4 1.0` | 바닥 마찰을 환경마다 무작위로 (미끄러운 바닥 대비) |
+| `--terrain-difficulty 0.8 2.0` | 시험만큼 험한 지형에서 연습 |
+| `--reward servo_overload=-1` | 서보 데이터시트 한계를 넘는 토크에 감점 |
+| `--push 0.5 2` | 2초마다 몸통을 무작위로 밀기 (부딪힘 대비) |
+| `--deployable-obs` | 실물에서 잴 수 있는 센서 값만 쓰기 + 센서 잡음 (실물 오리에는 몸통 속도·높이 센서가 없음) |
+
+### 15단계. 학습 뒤 자동 평가, 그리고 자율 학습
+
+걷기 학습(10단계~)이 끝나면 **자동으로 평가**하고 보고서를 만듭니다 (약 5분, 끄려면 `--no-eval`).
+이어서 학습했으면(`--init-from`) 시작 정책과 같은 조건에서 비교합니다.
+
+| 평가 | 내용 |
+|---|---|
+| 지형 | 지형 5종 × 험한 정도 1.5, 2.0 × 마찰 1.0, 0.5, 각 10번 → **보행 점수** = 울퉁불퉁한 지형 160번 중 10초 버틴 비율 |
+| 밀기 | 평지에서 2초마다 0.3·0.4 m/s로 밀기, 각 10번 |
+| 서보 | 관절 토크가 서보 데이터시트 한계 밖인 시간 |
+| 걸음 | 속도, 발 들기, 좌우 걸음 길이, **절뚝임 점수**, 연속 사진·그래프·영상 |
+| 판정 | 합격 여부, 차이가 **우연보다 큰지**(통계), 지금까지 가장 잘 걷는 정책(**챔피언**)을 바꿀지 |
+
+보고서 예 (`<실행 폴더>/eval/report.md`, TensorBoard의 TEXT 탭에도):
+
+```
+- 보행 점수 90.0 (울퉁불퉁한 지형 160번 중 10초 버팀 비율) — 합격
+- 🏆 챔피언 갱신 — 보행 점수는 우연 범위 안에서 같고 밀기 시험이 우연보다 크게 좋음 (14 → 20 / 20)
+- 밀기 버티기 (평지, 2초마다 무작위 방향, 10번 중): 0.3 m/s 10 → 10, 0.4 m/s 4 → 10
+- 평지 다리 토크 평균 RMS 0.54 → 0.53 N·m (-2 %), 데이터시트 한계 밖 평균 0.1 → 0.0 %
+```
+
+```bash
+python learning/evaluate_walk.py --params output/learning/<실행>/params.pkl            # 따로 실행 (기준 = 시작 정책)
+python learning/evaluate_walk.py --params A.pkl --baseline B.pkl                       # 두 정책 비교
+python learning/evaluate_walk.py --params <정책.pkl> --quick                            # 빠르게 (약 40초)
+```
+
+<img src="docs/images/duck_champion_filmstrip.png" width="760">
+
+*지금까지의 챔피언 (2026-10-12): 험한 지형 160번 중 144번 버팀, 0.4 m/s 밀기 10번 모두 버팀, 서보 한계 밖 0 %.*
+
+**자율 학습**: 이 평가를 바탕으로 Claude(AI)가 다음 실험을 스스로 골라 학습 → 평가 → 판단을 반복합니다.
+
+```mermaid
+flowchart LR
+  A["학습<br/>(MuJoCo 창 띄움, 약 2시간)"] --> B["자동 평가<br/>(보고서, 약 5분)"]
+  B --> C{"챔피언보다<br/>나은가?"}
+  C -- 예 --> D["챔피언 갱신 →<br/>그 정책에서 다음 아이디어"]
+  C -- 아니오 --> E["변경을 버리고 →<br/>챔피언에서 다른 아이디어"]
+  D --> A
+  E --> A
+```
+
+판단 규칙, 아이디어 목록, 실험마다의 기록과 배운 것 → **[docs/10 자율 학습](docs/10_auto_research.md)**
+
+---
 
 ### 막혔을 때
 
@@ -327,7 +446,11 @@ python learning/feasibility.py --params <오리 정책.pkl>      # 한 발 토�
 | 노드 실행 시 `No module named 'mujoco'` | `colcon build` 를 직접 썼음 → `bash scripts/build_ros.sh` |
 | 다른 터미널에서 `ros2 topic list` 에 토픽이 안 보임 | 그 터미널에서도 4단계를 해야 합니다 (같은 `ROS_DOMAIN_ID=27` 이 되도록) |
 | 창이 안 뜸 (원격 접속 등 화면 없는 환경) | 튜토리얼은 `--headless`, ROS2는 `viewer:=false rviz:=false` 를 붙여 실행 |
-| 그 밖의 문제 | `python scripts/check_env.py` 출력을 확인 → [docs/01 문제 해결](docs/01_environment.md) |
+| GPU 환경(`activate_gpu.sh`)을 켠 터미널에서 4단계를 했더니 `ros2: command not found` | 2026-10-11 이전 `activate.sh`의 문제입니다 → `git pull`. 또는 새 터미널에서 4단계 |
+| 학습 시작 후 몇 분간 출력이 없음 | 정상입니다. GPU용 코드 컴파일(약 3~4분) |
+| 스텝 수를 다 채웠는데 안 끝나는 것 같음 | 학습 뒤 **자동 평가**(약 5분)가 돌고 있습니다. 출력에 `자동 평가 시작`이 보이면 정상 |
+| 학습이 이상하게 느림 | `nvidia-smi`로 다른 프로그램이 GPU를 쓰는지 확인. `--watch` 창은 학습을 약 2배 느리게 함 |
+| 그 밖의 문제 | `python scripts/check_env.py` 출력을 확인 → [docs/01 문제 해결](docs/01_environment.md), GPU 학습은 [docs/08 §7](docs/08_gpu_walking.md) |
 
 ### 다음에 읽을 것
 
@@ -336,15 +459,23 @@ python learning/feasibility.py --params <오리 정책.pkl>      # 한 발 토�
 | [tutorials/README.md](tutorials/README.md) | MuJoCo 튜토리얼 t01~t07 (순서대로, 과제 포함) |
 | [docs/06_ros2_hands_on.md](docs/06_ros2_hands_on.md) | ROS2 실행 가이드: 명령별로 무슨 일이 일어나는지 |
 | [docs/07_learning.md](docs/07_learning.md) | 강화학습 첫 예제: 개념, 실행, 결과 해석, CPU vs GPU |
-| [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기 |
-| [docs/09_open_source_robot.md](docs/09_open_source_robot.md) | 오픈소스 로봇(오리) 불러오기: URDF 점검표, 좌우 부호, 서 있기 |
-| [docs/10_auto_research.md](docs/10_auto_research.md) | 자율 학습: 학습 → 자동 평가 → Claude가 다음 실험 결정, 보행 점수·챔피언, 실험 기록 |
+| [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기, 자동 평가 |
+| [docs/09_open_source_robot.md](docs/09_open_source_robot.md) | 오픈소스 오리 로봇: 불러오기, 걷기, 지형, 실물 기준 점검(동역학 한계·서보), 실험 기록 |
+| [docs/10_auto_research.md](docs/10_auto_research.md) | 자율 학습: 보행 점수·챔피언, 판단 규칙, 실험 기록과 배운 것 |
 | [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
 | [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
 
 ---
 
-## 폴더 구조
+## 지금 어디까지 왔나 (2026-10-12)
+
+- **오리 로봇 챔피언**: 험한 지형 160번 중 144번 버팀, 0.4 m/s 밀기 10번 모두 버팀, 서보 데이터시트 한계 밖 0 % (`output/learning/champion_open_duck_mini.json`).
+- **실물에 올리기 전 남은 일**: 지금 챔피언은 실물에 없는 센서 값(몸통 속도·높이)을 씁니다. 이것을 빼고 걷도록 다시 학습하는 중입니다
+  (`--deployable-obs`, [docs/10 §7](docs/10_auto_research.md)). 그다음은 정책을 실물 오리의 제어 프로그램 형식으로 내보내기입니다.
+- **가장 효과가 컸던 것**: 시험만큼 험한 지형에서 연습하기 (보행 점수 77.5 → 86.9), 서보 한계 초과 감점 (한계 밖 5.6 → 0.1 %).
+
+<details>
+<summary><b>폴더 구조</b> (펼치기)</summary>
 
 ```
 Giga/                             (clone한 폴더 이름. 로컬에서 다른 이름이어도 무관)
@@ -353,15 +484,14 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 ├── requirements-learning.txt     ← (선택) 강화학습 패키지: stable-baselines3, gymnasium, tensorboard (torch는 setup_learning.sh가)
 ├── requirements-gpu.txt          ← (선택) GPU 학습 환경(.venv-mjx): jax[cuda12], mujoco-mjx, brax
 ├── pyproject.toml                ← biped_sim 패키지 정의 (pip install -e . 로 어디서든 import 가능)
-├── .gitignore
 │
 ├── scripts/                      ── 환경/도구
 │   ├── install_system_deps.sh    ← [1회, sudo] ROS2 Humble 등 apt 패키지 설치 (--dry-run으로 미리 보기)
+│   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
+│   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + ros2_ws + ROS_DOMAIN_ID=27
 │   ├── setup_learning.sh         ← [선택, 1회] PyTorch(CPU판, --gpu로 GPU판) + 강화학습 패키지 설치
 │   ├── setup_gpu_learning.sh     ← [선택, 1회] GPU 학습 환경 .venv-mjx 설치 (JAX, MJX, Brax)
 │   ├── activate_gpu.sh           ← [GPU 학습 터미널마다] source: .venv-mjx 켜기
-│   ├── setup_env.sh              ← [1회] .venv 생성 + 설치 + 점검
-│   ├── activate.sh               ← [매 터미널] source: ROS2 Humble + .venv + ros2_ws + ROS_DOMAIN_ID=27
 │   ├── check_env.py              ← 환경 진단 (Python/numpy/mujoco/ROS2/GL)
 │   ├── build_ros.sh              ← ros2_ws 빌드 (venv의 python -m colcon build — 그냥 colcon build 금지)
 │   ├── get_open_duck.sh          ← [선택, 1회] 오픈소스 오리 로봇 Open Duck Mini 내려받기 (고정 커밋, docs/09)
@@ -376,24 +506,21 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 05_ros2_bridge_plan.md    ← ROS2 연동 단계별 실행 계획 (사전 검증 결과, 인터페이스 명세, 결정 사항, 진행 상태)
 │   ├── 06_ros2_hands_on.md       ← ROS2 실행 가이드: 명령별로 일어나는 일 + 터미널 실습
 │   ├── 07_learning.md            ← 강화학습 첫 예제: 밀려도 넘어지지 않기 (PPO), TensorBoard
-│   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기
-│   ├── 09_open_source_robot.md   ← 오픈소스 로봇 불러오기: URDF 점검표, Open Duck Mini 실습
+│   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기, 자동 평가
+│   ├── 09_open_source_robot.md   ← 오픈소스 로봇(오리): 불러오기, 걷기, 지형, 동역학 한계, 실물 기준 학습 기록
 │   ├── 10_auto_research.md       ← 자율 학습 규칙과 실험 기록 (보행 점수, 챔피언)
-│   └── images/                   ← README의 "이렇게 보이면 성공" 그림
+│   └── images/                   ← 문서의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
-│   ├── mjcf/
-│   │   └── falling_box.xml       ← MJCF Hello World (t01, t02)
-│   ├── urdf/
-│   │   └── pendulum/
-│   │       └── pendulum.urdf     ← 최소 URDF: 링크 2 + 관절 1 (t03)
-│   │                               (2족 로봇 URDF는 ros2_ws/src/giga_description/urdf/ 로 이동)
+│   ├── mjcf/falling_box.xml      ← MJCF Hello World (t01, t02)
+│   ├── urdf/pendulum/pendulum.urdf ← 최소 URDF: 링크 2 + 관절 1 (t03)
+│   │                               (2족 로봇 URDF는 ros2_ws/src/giga_description/urdf/ 에 있음)
 │   └── third_party/              ← 외부 오픈소스 로봇 (내려받아 채움, git 제외. README.md에 출처·라이선스)
 │
 ├── biped_sim/                    ── 시뮬레이터 코어 (Python 패키지)
 │   ├── __init__.py               ← 공개 API 모음
 │   ├── paths.py                  ← 파일 경로 상수 (실행 위치와 무관하게 동작)
-│   ├── builder.py                ← URDF → MuJoCo 모델 (freejoint·모터·IMU·바닥·충돌제외·키프레임)
+│   ├── builder.py                ← URDF → MuJoCo 모델 (freejoint·모터·IMU·바닥·충돌제외·키프레임·지형)
 │   ├── robot.py                  ← RobotInterface: 관절 '이름' 기반 상태 읽기/토크 쓰기 (ROS2 JointState 대응)
 │   ├── controllers.py            ← JointPDController (τ = Kp·e + Kd·ė + τ_ff, 토크 포화)
 │   ├── robot_configs.py          ← 로봇별 설정 (URDF 경로, home 자세, 게인, 발 링크): SIMPLE_BIPED, OPEN_DUCK_MINI
@@ -402,7 +529,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── terrain.py                ← 울퉁불퉁한 지형(높이맵): 언덕·불규칙한 경사로·장애물·학습용 넓은 지형
 │   └── envs/                     ← 강화학습 환경
 │       ├── balance.py            ←   밀기 버티기 (Gymnasium, CPU) + 평가 함수
-│       └── walk_mjx.py           ←   보행 (Brax, GPU MJX) — .venv-mjx에서만
+│       └── walk_mjx.py           ←   보행 (Brax, GPU MJX): 보상, 서보 모델, 마찰·밀기 무작위, 실물 관측 — .venv-mjx에서만
 │
 ├── tutorials/                    ── 학생용 실습 (순서대로)
 │   ├── README.md                 ← 각 튜토리얼의 관찰 포인트 + 과제
@@ -422,12 +549,12 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
 │   ├── test_open_duck.py         ← 오리 로봇: 빌더 보완, 바닥 1 mm 위 시작, 좌우 부호, 서 있기 (파일 있을 때만)
 │   ├── test_terrain.py           ← 지형 높이 = MuJoCo 실제 표면(광선으로 확인), 바꿔 끼우기, 출발 자리
-│   └── test_walk_mjx.py          ← GPU 보행 환경·관측 일치·학습 화면·걸음 분석·미리 학습된 걸음 (.venv-mjx에서만)
+│   └── test_walk_mjx.py          ← GPU 보행 환경·관측 일치·서보 모델·자세·실물 관측·학습 화면·자동 평가 (.venv-mjx에서만)
 │
-├── learning/                     ── 강화학습 예제 (CPU: docs/07, GPU 보행: docs/08)
+├── learning/                     ── 강화학습 (CPU: docs/07, GPU 보행: docs/08~10)
 │   ├── train_balance.py          ← PPO 학습 → output/learning/ (모델, 기록, 학습 곡선, 비교표)
 │   ├── evaluate_balance.py       ← 비교표, MuJoCo 화면 재생 (--view, --baseline, --pretrained)
-│   ├── train_walk_gpu.py         ← GPU 보행 학습 (Brax PPO), TensorBoard, 보상 바꾸기(--reward), 학습 화면(--watch)
+│   ├── train_walk_gpu.py         ← GPU 보행 학습 (Brax PPO), TensorBoard, 학습 화면(--watch), 끝나면 자동 평가
 │   ├── play_walk.py              ← 보행 정책 학습 화면(--live)·재생(--view)
 │   ├── walk_tools.py             ← 보행 공용 도구: 정책 불러오기, 재생기, 에피소드 기록, 걸음 수치
 │   ├── gpu_env.py                ← GPU 학습 환경 확인 (다른 터미널에서 실행하면 .venv-mjx로 다시 실행)
@@ -435,7 +562,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── analyze_gait.py           ← 걸음 분석: 영상·연속 사진·그래프·절뚝임 점수, 체크포인트 비교(--run)
 │   ├── terrain_trial.py          ← 울퉁불퉁한 지형 실험: MuJoCo 화면에서 에피소드마다 새 지형 (--headless는 통계)
 │   ├── feasibility.py            ← 동역학 한계 계산(토크·턱·경사·속도·흔들림)과 학습한 걸음의 측정 비교 (docs/09 §8)
-│   ├── evaluate_walk.py          ← 학습 뒤 자동 평가: 지형·토크·걸음, 이전 정책과 비교 보고서 (docs/08 §4.1)
+│   ├── evaluate_walk.py          ← 학습 뒤 자동 평가: 지형·밀기·서보·걸음, 보행 점수와 챔피언 (docs/08 §4.1, docs/10)
 │   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),
 │                                    walk_policy.pkl/.json (다듬은 걸음, docs/08 §6)
 │
@@ -452,51 +579,51 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │           ├── launch/sim.launch.py             ← sim_node + robot_state_publisher + RViz + 제어기
 │           └── package.xml, setup.py, setup.cfg, resource/
 │
-├── output/                       ── 생성물 (git 제외): 내보낸 MJCF, 그래프, 스냅샷
-├── biped_sim.egg-info/           ── pip install -e . 가 자동 생성하는 메타데이터 (git 제외, 건드리지 않음)
+├── output/                       ── 생성물 (git 제외): 학습 결과, 평가 보고서, 그래프, 스냅샷
 ├── .venv/                        ── 가상환경 (git 제외, setup_env.sh가 생성)
 └── .venv-mjx/                    ── (선택) GPU 학습 가상환경 (git 제외, setup_gpu_learning.sh가 생성)
 ```
 
-### 의존 관계
-
 ```mermaid
 flowchart TD
-  T["tutorials/ · tests/<br/>ros2_ws/ sim_node"] --> API["biped_sim (패키지)"]
-  API --> CFG[robot_configs] --> URDF["models/urdf/*.urdf"]
-  API --> RUN[runner] & CTL[controllers] & ROB[robot] & BLD[builder]
+  T["tutorials/ · tests/<br/>ros2_ws/ sim_node · learning/"] --> API["biped_sim (패키지)"]
+  API --> CFG[robot_configs] --> URDF["URDF (ros2_ws · models/third_party)"]
+  API --> RUN[runner] & CTL[controllers] & ROB[robot] & BLD[builder] & TER[terrain]
   ROB --> BLD
   ROB & BLD --> UT[utils]
   BLD --> MJ["mujoco.MjSpec / MjModel"]
 ```
 
-## 설계 원칙
+</details>
+
+<details>
+<summary><b>설계 원칙</b> (펼치기)</summary>
 
 1. **URDF가 단일 원본**: 로봇 기구학/관성은 URDF 한 곳에서만 정의하고 ROS2와 공유합니다.
-   시뮬레이션 전용 요소(바닥, 모터, IMU, freejoint 등)는 `biped_sim/builder.py`가 덧붙입니다.
+   시뮬레이션 전용 요소(바닥, 모터, IMU, freejoint 등)는 `biped_sim/builder.py`가 덧붙입니다. 받은 오픈소스 URDF도 고치지 않습니다.
 2. **이름 기반 접근**: 배열 인덱스 대신 관절 이름으로 다룹니다 (`RobotInterface`). ROS2 `JointState`와 1:1.
 3. **토크 모터 + 외부 PD**: MuJoCo의 position 액추에이터 대신, 실제 모터 드라이버처럼 PD를 직접 계산해 토크로 넣습니다.
-4. **숫자로 검증**: 진자 주기 vs 이론, 접촉력 합 vs 무게 등 해석해와 비교하고, 그 결과를 테스트로 고정합니다.
+4. **숫자로 검증**: 진자 주기 vs 이론, 접촉력 합 vs 무게, 지형 높이 vs 광선 측정 등 해석해와 비교하고, 그 결과를 테스트로 고정합니다.
+5. **예전 결과를 깨지 않기**: 학습 설정(서보 모델, 자세, 관측 등)은 실행마다 `config.json`에 저장되고, 재생·분석은 그 설정을 그대로 씁니다.
 
-## 지금까지 실험으로 확인한 중요한 사실
+</details>
+
+<details>
+<summary><b>지금까지 실험으로 확인한 중요한 사실</b> (펼치기)</summary>
 
 | 사실 | 확인한 곳 |
 |---|---|
 | URDF를 그대로 MuJoCo에 넣으면 루트 링크가 world에 병합되고 visual·액추에이터가 사라진다 | t03, t04, `test_raw_urdf_import_behavior` |
 | 병합된/고정된 몸통은 부모-자식 충돌 필터가 안 먹혀 **에러 없이 결과가 틀린다** (진자 주기 59% 오차) | t03, `test_fixed_base_has_no_spurious_self_contacts` |
-| 빌더 사용 시 진자 주기 오차 0.015 % | t03, `test_pendulum_period_matches_theory` |
 | 서 있을 때 두 발 수직력 합 = 80.44 N = 8.2 kg × 9.81 | t06, `test_biped_stands_and_contact_force_equals_weight` |
-| `<mujoco>` 태그가 들어간 URDF도 ROS2 `robot_state_publisher`가 정상 파싱 | `test_urdf_loads_in_ros2_robot_state_publisher` |
-| `package://` 메쉬 경로는 MuJoCo가 못 읽음 → `meshdir` + `strippath="true"`로 해결 | [docs/03](docs/03_urdf_and_mujoco.md) |
-| MJCF `euler`(기본 intrinsic xyz) ≠ URDF `rpy`(고정축 XYZ) | t02 |
-| `mujoco.viewer.launch_passive`를 그대로 쓰면 종료 시 세그폴트/X 에러/멈춤 (그리기 스레드를 안 기다림) → `biped_sim.passive_viewer`로 해결 | [docs/05 §2](docs/05_ros2_bridge_plan.md) |
-| ROS2 노드는 venv의 `python -m colcon build`로 빌드해야 MuJoCo를 쓸 수 있음 (그냥 `colcon build`는 `No module named 'mujoco'`) | `scripts/build_ros.sh` |
-| Python ROS2 노드로 500 Hz 시뮬레이션 + 발행 가능 (`/joint_states` 499.99 Hz, 제어 왕복 지연 중앙값 0.77 ms) | [docs/05 §2](docs/05_ros2_bridge_plan.md), `test_ros_sim_node.py` |
-| ROS 토픽만으로 제어하는 노드가 로봇을 세우고 앉혔다 일으킴 (몸통 0.505↔0.590 m, 기울기 ≤ 1.4°) | `test_ros_launch.py` |
-| MuJoCo는 world에 고정된 바디의 가속도계를 0으로 냄 → `RobotInterface.imu()`에서 +g 보정 | `test_imu_accelerometer_reads_gravity_reaction_on_fixed_base` |
+| `package://` 메쉬 경로는 MuJoCo가 못 읽음 → `meshdir` + `strippath="true"`로 해결 | [docs/03](docs/03_urdf_and_mujoco.md), t07 |
+| `mujoco.viewer.launch_passive`를 그대로 쓰면 종료 시 세그폴트/X 에러/멈춤 → `biped_sim.passive_viewer`로 해결 | [docs/05 §2](docs/05_ros2_bridge_plan.md) |
+| ROS2 노드는 venv의 `python -m colcon build`로 빌드해야 MuJoCo를 쓸 수 있음 | `scripts/build_ros.sh` |
+| Python ROS2 노드로 500 Hz 시뮬레이션 + 발행 가능 (제어 왕복 지연 중앙값 0.77 ms) | [docs/05 §2](docs/05_ros2_bridge_plan.md), `test_ros_sim_node.py` |
+| 걸음 보상에 박자·대칭이 없으면 깡충 뛰거나 절뚝이며 걷는다 (절뚝임 40 % → 고친 뒤 1.8 %) | [docs/08 §5~6](docs/08_gpu_walking.md) |
+| MuJoCo는 높이맵 데이터를 0~1로 다시 늘인다 (그대로 넣으면 언덕이 2배 높아짐) | `biped_sim/terrain.py`, `test_terrain.py` |
+| 오리 서보는 데이터시트 기준 정지 토크 1.91 N·m인데 시뮬레이션 기본값은 3.23 N·m, 속도에 따른 감소도 없었다 | [docs/09 §8](docs/09_open_source_robot.md) |
+| 보상을 더하는 것보다 **시험만큼 험한 곳에서 연습**하는 것이 효과가 가장 컸다 (보행 점수 77.5 → 86.9) | [docs/10 §6](docs/10_auto_research.md) |
+| 시뮬레이션에서만 아는 센서 값(몸통 속도·높이)을 가리면 잘 걷던 정책이 거의 멈춘다 (0.15 → 0.03 m/s) | [docs/09 §9.13](docs/09_open_source_robot.md) |
 
-## 다음 단계
-
-IMU를 쓰는 균형 제어기(40 N 밀기 견디기), [docs/00_roadmap.md](docs/00_roadmap.md)의 Phase 4(12-DoF 모델, 센서/모터 현실화).
-ROS2 연동의 남은 항목은 [docs/05](docs/05_ros2_bridge_plan.md) 단계표 참고.
-실제 로봇의 URDF가 준비되면 [docs/03 §5 체크리스트](docs/03_urdf_and_mujoco.md)를 따라 `robot_configs.py`에 추가하세요.
+</details>
