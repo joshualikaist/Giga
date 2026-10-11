@@ -109,6 +109,29 @@ def set_range(fig: mujoco.MjvFigure, x_range, ys, y_min=None, y_max=None) -> Non
     fig.yformat = "%.0f" if span >= 6 else ("%.1f" if span >= 0.6 else "%.2f")
 
 
+# MuJoCo 화면 글자(보통 글꼴)의 폭 [px]: 문자 32~126을 chr(48 + 폭)으로 담음 (MjrContext.charWidth에서 잼).
+# MuJoCo 뷰어는 보통 화면에서 글꼴 배율 150 %로 그림 (실측: 1845 px 창 캡처). 줄 높이 28 px + 간격.
+# 창 크기가 바뀔 때마다 이것으로 한 줄에 들어갈 글자를 계산해 줄을 나눔 (긴 글이 잘리지 않게)
+_CHAR_W = "669><B?677<<6768<<<<<<<<<<66<<<:B?>@?>=@?6<?<B?A>A>?>??E?>=7778<8<<;<<6<<55;5A<<<<7;6<;?;;;8<8<"
+LINE_H = 34   # [px] 줄 간격 포함
+
+
+def text_width(text: str) -> int:
+    """화면 글자 폭 [px] (배율 150 %). 표에 없는 문자는 12 px로."""
+    return sum(ord(_CHAR_W[ord(c) - 32]) - 48 if 32 <= ord(c) < 127 else 12 for c in text)
+
+
+def fit_lines(parts: list[str], width_px: int, sep: str = "   ") -> list[str]:
+    """parts를 순서대로 한 줄에 sep으로 이어 붙이다가 width_px(여백 제외)를 넘으면 다음 줄로."""
+    room, lines = width_px - 40, []
+    for part in (p for p in parts if p):
+        if lines and text_width(lines[-1] + sep + part) <= room:
+            lines[-1] += sep + part
+        else:
+            lines.append(part)
+    return lines
+
+
 def gait_target(t: np.ndarray, period: float) -> tuple[np.ndarray, np.ndarray]:
     """gait_phase 보상이 원하는 발 접촉 (walk_mjx._gait_phase_match와 같은 규칙): 앞 절반 왼발, 뒤 절반 오른발."""
     phase = np.mod(t / period, 1.0)
@@ -195,7 +218,19 @@ class Dashboard:
 
         if self.mode == "graphs":
             self._fill_training_figures()
-            col_w, top, bottom = int(0.30 * w), int(0.06 * h), int(0.05 * h)
+            run = Path(self.log.run_dir).name if self.log.run_dir else "?"
+            alive = self.log.scalars.get("walk/episode_seconds")
+            top_lines = fit_lines([
+                "TRAINING FINISHED (replaying final policy, close window to exit)" if self.finished else "LIVE TRAINING",
+                run, f"step {step}{progress}", f"survives {alive[-1][1]:.1f} / 10 s" if alive else "",
+                f"policy reloads {self.reloads}", f"terrain: {self.scene}" if self.scene else ""], w)
+            bottom_lines = fit_lines([
+                "[Enter] robot view", f"t {t:4.1f} s   {state['vx']:+.2f} m/s",
+                f"last 4 s: both feet in air {self.recent[0]:.0f}%, one foot {self.recent[1]:.0f}%"], w, sep="   |   ")
+            # 글 줄 수만큼 그래프를 내림 (창이 좁아 줄이 늘어도 글과 그래프가 겹치지 않게)
+            col_w = int(0.30 * w)
+            top = max(int(0.04 * h), LINE_H * len(top_lines) + 12)
+            bottom = max(int(0.04 * h), LINE_H * len(bottom_lines) + 12)
             fig_h = (h - top - bottom) // 2
             rects = []
             for col, names in ((0, ("reward", "speed")), (w - col_w, ("terms", "gait_hist"))):
@@ -204,19 +239,9 @@ class Dashboard:
             gait_h = int(0.31 * h)  # 가운데 위: 발 접촉 (로봇은 그 아래에 보임)
             rects.append((mujoco.MjrRect(col_w, h - top - gait_h, w - 2 * col_w, gait_h), self.figs["gait"]))
             viewer.set_figures(rects)
-            run = Path(self.log.run_dir).name if self.log.run_dir else "?"
-            alive = self.log.scalars.get("walk/episode_seconds")
-            alive = f"   survives {alive[-1][1]:.1f} / 10 s" if alive else ""
             # 글자 칸(text1, text2)을 둘 다 쓰면 가운데 정렬 위치에서 서로 겹쳐서 한 칸에 모아 씀
-            viewer.set_texts([
-                (font, grid.mjGRID_TOP,
-                 f"{'TRAINING FINISHED (replaying final policy, close window to exit)' if self.finished else 'LIVE TRAINING'}"
-                 f"   {run}   step {step}{progress}{alive}   policy reloads {self.reloads}"
-                 + (f"   |   terrain: {self.scene}" if self.scene else ""), ""),
-                (font, grid.mjGRID_BOTTOM,
-                 f"[Enter] robot view   |   t {t:4.1f} s   {state['vx']:+.2f} m/s   |   last 4 s: both feet in air "
-                 f"{self.recent[0]:.0f}%, one foot {self.recent[1]:.0f}%", ""),
-            ])
+            viewer.set_texts([(font, grid.mjGRID_TOP, "\n".join(top_lines), ""),
+                              (font, grid.mjGRID_BOTTOM, "\n".join(bottom_lines), "")])
         else:
             viewer.set_figures([(mujoco.MjrRect(0, 0, w, int(0.27 * h)), self.figs["gait"])])
             viewer.set_texts([
