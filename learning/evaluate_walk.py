@@ -341,16 +341,21 @@ def main():
         lines.append(f"기준 정책 보행 점수 {bs['score']:.1f}" + ("" if bs["passed"] else " (불합격: " + ", ".join(bs["problems"]) + ")"))
     is_default = all(getattr(args, k) == v for k, v in DEFAULTS.items())
     if is_default:
-        champion_file = CHAMPION_DIR / f"champion_{spec.name}.json"
+        # 실물 관측 정책(deployable_obs)은 따로 겨룸: 시뮬레이션에만 있는 센서 값을 쓰는 정책과는 비교 대상이 다름 (docs/10 §7)
+        category = spec.name + ("_deployable" if spec.deployable_obs else "")
+        champion_file = CHAMPION_DIR / f"champion_{category}.json"
         champ = json.loads(champion_file.read_text()) if champion_file.exists() else None
         champion_push = None   # 기준 정책이 바로 챔피언이면 이번에 잰 그 밀기 시험 결과를 챔피언 쪽 값으로 씀
         if base is not None and champ is not None and baseline is not None \
                 and Path(champ["params"]).resolve() == baseline.resolve():
             bs = walking_score(base, target)
             champion_push = {"push_ok": bs["push_ok"], "push_trials": bs["push_trials"]}
-        updated, old, why = update_champion(spec.name, params, run_dir.name, step, score, champion_push)
-        lines.append((f"🏆 **챔피언 갱신** — {why}" + (f" (이전: {old['run']} {old['score']:.1f})" if old else ""))
-                     if updated else f"챔피언 유지: {old['run']} {old['score']:.1f} ({why})" if old else f"챔피언 없음 ({why})")
+        updated, old, why = update_champion(category, params, run_dir.name, step, score, champion_push)
+        kind = "실물 관측 챔피언" if spec.deployable_obs else "챔피언"
+        lines.append((f"🏆 **{kind} 갱신** — {why}" + (f" (이전: {old['run']} {old['score']:.1f})" if old else ""))
+                     if updated else f"{kind} 유지: {old['run']} {old['score']:.1f} ({why})" if old else f"{kind} 없음 ({why})")
+        if base is not None and spec.deployable_obs and not get_spec(base_config).deployable_obs:
+            lines.append("⚠ 기준 정책은 시뮬레이션에만 있는 센서 값(몸통 속도·높이)을 쓰는 정책이라 비교는 참고용")
     else:
         lines.append("기본 조건이 아니라 챔피언과 비교하지 않음")
     md = report_md(run_dir.name, step, params, baseline, new, base, config, base_config, args, spec, lines)
