@@ -8,6 +8,9 @@
     python learning/play_walk.py --view --backend mjx   # 학습 때와 똑같은 GPU 시뮬레이터(MJX)로 재생
     python learning/play_walk.py                     # 화면 없이 10초 걸어 보고 요약만 (자세한 분석: analyze_gait.py)
 
+지형: 울퉁불퉁한 지형에서 학습한 정책(--terrain rough)은 화면에서도 에피소드마다 언덕 → 경사로 → 장애물 → 섞인 코스를
+    번갈아 보여 준다 (평가와 같은 시험 지형, 매번 새로 만듦). --terrain flat이면 평지만.
+
 화면에서 Enter 키: [학습 현황](그래프 + 가운데 로봇) ↔ [로봇 보기](로봇 크게 + 발 접촉 그래프)
     --live는 학습 현황, --view는 로봇 보기로 시작. 그래프는 learning/live_dashboard.py
 
@@ -24,6 +27,9 @@ from walk_tools import (LATEST, find_run_dir, gait_metrics, get_spec, load_polic
                         summary_lines)
 
 from biped_sim import passive_viewer, track_body_camera
+from biped_sim.terrain import make_terrain
+
+ROUGH_KINDS = ("hills", "slopes", "obstacles", "mixed")   # 화면에서 번갈아 보여 줄 지형 (평가의 시험 지형)
 
 
 def main():
@@ -33,6 +39,8 @@ def main():
     parser.add_argument("--view", action="store_true", help="MuJoCo 화면으로 반복 재생")
     parser.add_argument("--live", action="store_true",
                         help="학습 화면: 정책 파일이 바뀔 때마다(학습이 저장할 때마다) 다시 불러와 계속 재생 + 학습 그래프")
+    parser.add_argument("--terrain", choices=["auto", "flat", "rough"], default="auto",
+                        help="화면의 지형. auto: 학습이 울퉁불퉁한 지형이었으면 rough (에피소드마다 지형 종류를 바꿈)")
     parser.add_argument("--backend", choices=["mujoco", "mjx"], default="mujoco",
                         help="mujoco: 일반 MuJoCo (ROS2 sim_node와 같은 시뮬레이터) / mjx: 학습과 같은 GPU 시뮬레이터")
     args = parser.parse_args()
@@ -48,7 +56,10 @@ def main():
         print(f"정책 파일을 기다리는 중: {params_path} (학습 시작 후 약 3~4분)")
     else:
         raise SystemExit(f"정책이 없습니다: {args.params}\n→ 먼저 python learning/train_walk_gpu.py")
-    runner = make_runner(config, args.backend)
+    rough = args.backend == "mujoco" and (args.terrain == "rough" or (args.terrain == "auto" and config.get("terrain")))
+    runner = make_runner(config, args.backend, terrain=make_terrain("flat") if rough else None)   # 지형 격자를 가진 모델
+    trained = (config.get("terrain") or {}).get("difficulty", [0.4, 1.2])
+    difficulty = min(max(trained), 1.5)   # 학습 지형의 가장 험한 정도 (최대 1.5 = 평가의 쉬운 쪽)
     if args.live:   # 학습 화면: 그림자·바닥 반사를 끄면 한 장 그리는 시간 1/4 (오리 8.6 → 2.1 ms, 실측) → GPU 학습을 덜 방해
         runner.model.light_castshadow[:] = 0
         runner.model.mat_reflectance[:] = 0
@@ -95,6 +106,13 @@ def main():
                         print("학습 완료 — 마지막 정책을 계속 재생합니다 (창을 닫으면 끝)")
                 episode += 1
                 print(f"[에피소드 {episode}]" + ("" if policy is not None else " (첫 정책 기다리는 중: 행동 0)"))
+                if rough:   # 에피소드마다 다른 시험 지형 (출발 자리는 평평)
+                    kind = ROUGH_KINDS[(episode - 1) % len(ROUGH_KINDS)]
+                    runner.terrain = make_terrain(kind, seed=episode, difficulty=difficulty)
+                    runner.terrain.apply(runner.model)
+                    viewer.update_hfield(runner.model.hfield("terrain").id)
+                    dash.scene = f"{kind}, difficulty {difficulty:g}"
+                    print(f"  지형: {dash.scene}")
                 dash.start_episode()
                 rec = run_episode(runner, policy, viewer, on_step=lambda state: dash.on_step(viewer, state))
                 print("\n".join(summary_lines(gait_metrics(rec, runner.info))))

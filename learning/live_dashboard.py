@@ -150,6 +150,7 @@ class Dashboard:
             self.mode = "robot" if self.mode == "graphs" else "graphs"
 
     finished = False   # 학습이 끝났으면 True (play_walk가 config.json의 finished를 보고 바꿈)
+    scene = None       # 지금 화면의 지형 설명 (예: "hills, difficulty 1.5"). None = 평지
 
     def set_policy(self, config: dict, run_dir: Path | None, reloaded: bool = True) -> None:
         self.config = config
@@ -210,7 +211,8 @@ class Dashboard:
             viewer.set_texts([
                 (font, grid.mjGRID_TOP,
                  f"{'TRAINING FINISHED (replaying final policy, close window to exit)' if self.finished else 'LIVE TRAINING'}"
-                 f"   {run}   step {step}{progress}{alive}   policy reloads {self.reloads}", ""),
+                 f"   {run}   step {step}{progress}{alive}   policy reloads {self.reloads}"
+                 + (f"   |   terrain: {self.scene}" if self.scene else ""), ""),
                 (font, grid.mjGRID_BOTTOM,
                  f"[Enter] robot view   |   t {t:4.1f} s   {state['vx']:+.2f} m/s   |   last 4 s: both feet in air "
                  f"{self.recent[0]:.0f}%, one foot {self.recent[1]:.0f}%", ""),
@@ -219,9 +221,9 @@ class Dashboard:
             viewer.set_figures([(mujoco.MjrRect(0, 0, w, int(0.27 * h)), self.figs["gait"])])
             viewer.set_texts([
                 (font, grid.mjGRID_TOPLEFT,
-                 "training step\npolicy reloads\nepisode time\nforward speed\ndistance\nfeet on ground (L R)",
-                 f"{step}{progress}{' (finished)' if self.finished else ''}\n{self.reloads}\n{t:5.2f} s / 10 s\n"
-                 f"{state['vx']:+.2f} m/s (target {self.config['target_speed']:.2f})\n{distance:+.2f} m\n"
+                 "training step\npolicy reloads\nterrain\nepisode time\nforward speed\ndistance\nfeet on ground (L R)",
+                 f"{step}{progress}{' (finished)' if self.finished else ''}\n{self.reloads}\n{self.scene or 'flat'}\n"
+                 f"{t:5.2f} s / 10 s\n{state['vx']:+.2f} m/s (target {self.config['target_speed']:.2f})\n{distance:+.2f} m\n"
                  f"{'#' if contact[0] else '.'}   {'#' if contact[1] else '.'}"),
                 (font, grid.mjGRID_TOPRIGHT, "[Enter] training graphs\n\nlast 4 s\nboth feet in air\none foot",
                  f"\n\n\n{self.recent[0]:.0f} %\n{self.recent[1]:.0f} %"),
