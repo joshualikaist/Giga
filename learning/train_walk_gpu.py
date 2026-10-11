@@ -83,6 +83,8 @@ def main():
                         help="걸음 박자 [s] (오리 기본 0.5). 길면 발을 들어 앞으로 가져올 시간이 늘어 더 높이 들 수 있음 (docs/09 §8.3)")
     parser.add_argument("--terrain-difficulty", type=float, nargs=2, default=None, metavar=("최소", "최대"),
                         help="rough 학습 지형의 험한 정도 범위 (기본 0.4 1.2). 시험(1.5, 2.0)에 가깝게 올리면 더 험한 곳을 연습")
+    parser.add_argument("--push", type=float, nargs=2, default=None, metavar=("최대속도", "간격"),
+                        help="외란: '간격'초마다 몸통을 무작위 방향으로 0~'최대속도'[m/s]만큼 밈 (예: 0.15 2). 실물에서 부딪힘·흔들림 대비")
     parser.add_argument("--home-knee", type=float, default=None, metavar="RAD",
                         help="서 있는 자세의 무릎 각도 (오리 기본 0.8). 덜 굽히면 한 발 버티는 무릎 토크가 줄어듦 (docs/09 §9.5)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
@@ -148,7 +150,7 @@ def main():
         "target_speed": speed, "steps": total_steps, "steps_requested": args.steps, "envs": args.envs, "seed": args.seed,
         "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT, "gait_period": spec.gait_period,
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
-        "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee,
+        "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee, "push": args.push,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -163,7 +165,8 @@ def main():
           f"GPU 병렬 환경 {args.envs}개, 장치 {jax.devices()[0]}")
     print(f"보상 가중치: {config['reward_weights']}")
     print(f"서보 모델: {args.servo}" + (f", 바닥 마찰 {args.friction[0]}~{args.friction[1]} 무작위" if args.friction else "")
-          + (f", 서 있는 자세 무릎 {args.home_knee} rad (기준 높이 {spec.nominal_height:.3f} m)" if args.home_knee else ""))
+          + (f", 서 있는 자세 무릎 {args.home_knee} rad (기준 높이 {spec.nominal_height:.3f} m)" if args.home_knee else "")
+          + (f", 밀기 {args.push[1]:g}초마다 최대 {args.push[0]:g} m/s" if args.push else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -186,7 +189,8 @@ def main():
                                         difficulty=tuple(args.terrain_difficulty or (0.4, 1.2)))
         spawn_area = ((-5.5, 3.5), (-5.5, 5.5))
     env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
-                                   spawn_area=spawn_area, friction_range=args.friction)
+                                   spawn_area=spawn_area, friction_range=args.friction,
+                                   push=tuple(args.push) if args.push else None)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()

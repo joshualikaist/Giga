@@ -31,6 +31,24 @@ GROUPS = ("hip_roll", "hip_pitch", "knee", "ankle", "hip_yaw")   # 토크 표의
 # 기본 시험 조건. 이 조건으로 평가했을 때만 챔피언(지금까지 가장 잘 걷는 정책)과 비교·갱신한다 (점수를 견줄 수 있게)
 DEFAULTS = dict(episodes=10, difficulties=[1.5, 2.0], frictions=[1.0, 0.5], kinds=list(KINDS), seed=0)
 CHAMPION_DIR = Path(__file__).resolve().parents[1] / "output" / "learning"
+PUSH_TEST = dict(speeds=(0.3, 0.4), interval=2.0)   # 밀기 시험: 평지에서 2초마다 몸통을 무작위 방향으로 툭 (보행 점수와 별도)
+
+
+def push_trials(runner, policy, speed, interval, episodes, seed=0) -> list[bool]:
+    """평지 10초 동안 interval초마다 몸통 수평 속도에 speed [m/s]를 무작위 방향으로 더함. 에피소드마다 10초 버텼나."""
+    every = round(interval / runner.W.CONTROL_DT)
+    results = []
+    for ep in range(episodes):
+        rng = np.random.default_rng(seed * 1000 + ep)
+
+        def kick(state, k=[0]):   # run_episode가 제어 스텝마다 부름 (k = 스텝 수)
+            k[0] += 1
+            if k[0] % every == 0:
+                angle = rng.uniform(-np.pi, np.pi)
+                runner.data.qvel[0:2] += speed * np.array([np.cos(angle), np.sin(angle)])
+        rec = run_episode(runner, policy, on_step=kick)
+        results.append(not rec["fell"])
+    return results
 
 
 # ---------------------------------------------------------------------------- 점수·챔피언
@@ -85,6 +103,10 @@ def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> 
                   + ", ".join(f"{k} {n}/{args.episodes}" for k, n in result["terrain"][cond].items()), flush=True)
 
     runner = make_runner(config)
+    result["push"] = {f"{v:g}": int(sum(push_trials(runner, policy, v, PUSH_TEST["interval"], args.episodes, args.seed)))
+                      for v in PUSH_TEST["speeds"]}
+    print(f"  [{label}] 밀기 ({PUSH_TEST['interval']:g}초마다): "
+          + ", ".join(f"{v} m/s {n}/{args.episodes}" for v, n in result["push"].items()), flush=True)
     if out is not None and not args.no_video:
         rec, frames = record_with_frames(runner, policy)
     else:
@@ -144,6 +166,10 @@ def verdict(new: dict, base: dict | None, args, target_speed: float) -> list[str
         lines.append("⚠ **평지 10초 걸음에서 넘어짐**")
     if abs(g["speed_mps"] - target_speed) > 0.05:
         lines.append(f"⚠ 속도 {g['speed_mps']:.2f} m/s — 목표 {target_speed} ± 0.05 밖")
+    if new.get("push"):   # 밀기 시험 (보행 점수와 별도)
+        lines.append(f"밀기 버티기 (평지, {PUSH_TEST['interval']:g}초마다 무작위 방향, {args.episodes}번 중): " + ", ".join(
+            f"{v} m/s " + (f"{base['push'][v]} → {n}" if base is not None and base.get("push") else f"{n}")
+            for v, n in new["push"].items()))
     if base is not None:
         for name, kinds in (("지형 전체(평지 제외)", [k for k in args.kinds if k != "flat"]),
                             ("장애물", [k for k in args.kinds if k == "obstacles"])):
