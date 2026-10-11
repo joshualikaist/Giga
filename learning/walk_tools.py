@@ -51,20 +51,26 @@ def get_spec(config: dict) -> walk_mjx.WalkSpec:
 
 
 @functools.lru_cache(maxsize=4)
-def _policy_apply(obs_size: int, action_size: int, policy_hidden: tuple, value_hidden: tuple):
+def _policy_apply(obs_size: int, action_size: int, policy_hidden: tuple, value_hidden: tuple,
+                  privileged_critic: bool = False):
     """신경망 구조별로 한 번만 컴파일되는 함수 apply(params, obs) → 행동.
     가중치(params)를 인자로 받으므로, 정책을 바꿔 끼워도(학습 화면의 갱신, 체크포인트 비교) 다시 컴파일하지 않는다."""
     import jax
     from brax.training.acme import running_statistics
     from brax.training.agents.ppo import networks as ppo_networks
 
+    extra = {}
+    if privileged_critic:   # 비대칭 actor-critic으로 학습한 정책: 정책은 "state"만 봄 (critic의 "privileged_state"는 필요 없음)
+        obs_size = {"state": (obs_size,), "privileged_state": (obs_size,)}
+        extra = dict(policy_obs_key="state", value_obs_key="privileged_state")
     networks = ppo_networks.make_ppo_networks(
         obs_size, action_size,
         preprocess_observations_fn=running_statistics.normalize,   # 학습 때 normalize_observations=True
-        policy_hidden_layer_sizes=policy_hidden, value_hidden_layer_sizes=value_hidden)
+        policy_hidden_layer_sizes=policy_hidden, value_hidden_layer_sizes=value_hidden, **extra)
     make_policy = ppo_networks.make_inference_fn(networks)
     key = jax.random.PRNGKey(0)   # deterministic=True라 쓰이지 않지만 인자로 필요
-    return jax.jit(lambda params, obs: make_policy(params, deterministic=True)(obs, key)[0])
+    wrap = (lambda obs: {"state": obs}) if privileged_critic else (lambda obs: obs)
+    return jax.jit(lambda params, obs: make_policy(params, deterministic=True)(wrap(obs), key)[0])
 
 
 def load_policy(params_path: Path):
@@ -84,7 +90,8 @@ def load_policy(params_path: Path):
     if is_checkpoint:   # 설정 파일의 saved_step은 마지막 저장 기준 → 파일 이름의 스텝으로
         config["saved_step"] = int(params_path.stem.split("_")[-1])
     spec = get_spec(config)
-    apply = _policy_apply(spec.obs_size, spec.n, tuple(config["policy_hidden"]), tuple(config["value_hidden"]))
+    apply = _policy_apply(spec.obs_size, spec.n, tuple(config["policy_hidden"]), tuple(config["value_hidden"]),
+                          bool(config.get("privileged_critic")))
     params = brax_model.load_params(str(params_path))
     return (lambda obs: np.asarray(apply(params, obs))), config
 

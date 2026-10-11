@@ -55,6 +55,16 @@ from biped_sim import paths
 RUNS_DIR = paths.OUTPUT_DIR / "learning"
 
 
+def to_privileged_params(params):
+    """관측 하나로 학습한 정책 파라미터 → 비대칭 critic 형식 {"state", "privileged_state"}.
+    정책·관측 통계는 그대로 'state'에 쓰고, critic용 'privileged_state' 통계도 같은 값에서 시작 (실물 관측 정책도 가린 칸의
+    통계는 그 전 학습에서 이어받은 값이라 크기가 맞음: 속도 σ ≈ 0.05 m/s, 높이 σ ≈ 0.003 m). critic 가중치는 새로 (restore_value_fn=False)."""
+    norm, policy, value = params
+    both = lambda x: {"state": x, "privileged_state": x}   # noqa: E731
+    return (norm.replace(mean=both(norm.mean), std=both(norm.std), summed_variance=both(norm.summed_variance)),
+            policy, value)
+
+
 def main():
     ensure_gpu_env()   # ROS용 .venv에서 실행했으면 .venv-mjx로 다시 실행
     parser = argparse.ArgumentParser(description=__doc__,
@@ -87,6 +97,9 @@ def main():
                         help="외란: '간격'초마다 몸통을 무작위 방향으로 0~'최대속도'[m/s]만큼 밈 (예: 0.15 2). 실물에서 부딪힘·흔들림 대비")
     parser.add_argument("--deployable-obs", action="store_true",
                         help="실물에서 잴 수 있는 관측만 (몸통 속도·높이를 0으로 가림) + 센서 잡음. 실물 로봇에 올릴 정책용 (docs/10)")
+    parser.add_argument("--privileged-critic", action="store_true",
+                        help="비대칭 actor-critic: 정책은 실물 관측만, 학습 중 점수만 매기는 critic은 시뮬레이션의 모든 정보 "
+                             "(--deployable-obs와 함께. 실물에 올리는 정책은 그대로)")
     parser.add_argument("--home-knee", type=float, default=None, metavar="RAD",
                         help="서 있는 자세의 무릎 각도 (오리 기본 0.8). 덜 굽히면 한 발 버티는 무릎 토크가 줄어듦 (docs/09 §9.5)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
@@ -156,7 +169,7 @@ def main():
         "physics_dt": walk_mjx.PHYSICS_DT, "control_dt": walk_mjx.CONTROL_DT, "gait_period": spec.gait_period,
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
         "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee, "push": args.push,
-        "deployable_obs": args.deployable_obs,
+        "deployable_obs": args.deployable_obs, "privileged_critic": args.privileged_critic,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -173,7 +186,8 @@ def main():
     print(f"서보 모델: {args.servo}" + (f", 바닥 마찰 {args.friction[0]}~{args.friction[1]} 무작위" if args.friction else "")
           + (f", 서 있는 자세 무릎 {args.home_knee} rad (기준 높이 {spec.nominal_height:.3f} m)" if args.home_knee else "")
           + (f", 밀기 {args.push[1]:g}초마다 최대 {args.push[0]:g} m/s" if args.push else "")
-          + (", 실물 관측만(속도·높이 가림)+센서 잡음" if args.deployable_obs else ""))
+          + (", 실물 관측만(속도·높이 가림)+센서 잡음" if args.deployable_obs else "")
+          + (", 비대칭 critic(전체 정보)" if args.privileged_critic else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -197,7 +211,8 @@ def main():
         spawn_area = ((-5.5, 3.5), (-5.5, 5.5))
     env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
                                    spawn_area=spawn_area, friction_range=args.friction,
-                                   push=tuple(args.push) if args.push else None, obs_noise=args.deployable_obs)
+                                   push=tuple(args.push) if args.push else None, obs_noise=args.deployable_obs,
+                                   privileged_critic=args.privileged_critic)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()
@@ -251,7 +266,16 @@ def main():
     network_factory = functools.partial(
         ppo_networks.make_ppo_networks,
         policy_hidden_layer_sizes=tuple(config["policy_hidden"]),
-        value_hidden_layer_sizes=tuple(config["value_hidden"]))
+        value_hidden_layer_sizes=tuple(config["value_hidden"]),
+        **(dict(policy_obs_key="state", value_obs_key="privileged_state") if args.privileged_critic else {}))
+    restore, restore_value = None, True
+    if args.init_from:
+        restore = brax_model.load_params(str(args.init_from))
+        init_config = json.loads((args.init_from.parent.parent / "config.json" if args.init_from.parent.name == "checkpoints"
+                                  else args.init_from.with_name("config.json")).read_text())
+        if args.privileged_critic and not init_config.get("privileged_critic"):
+            restore, restore_value = to_privileged_params(restore), False
+            print("이어서 학습: 정책·관측 통계는 그대로, critic은 새로 (비대칭 critic으로 바꿈)")
 
     ppo.train(
         environment=env,
@@ -277,7 +301,8 @@ def main():
         log_training_metrics=True,
         progress_fn=progress,
         policy_params_fn=save_policy,   # Brax가 평가 직전마다 부름 (마지막 평가 포함 → 끝난 뒤 따로 저장할 필요 없음)
-        restore_params=brax_model.load_params(str(args.init_from)) if args.init_from else None,
+        restore_params=restore,
+        restore_value_fn=restore_value,
     )
     writer.close()
     # 학습 화면(play_walk --live)이 '학습 끝, 마지막 정책 재생 중'으로 바꿔 보이게

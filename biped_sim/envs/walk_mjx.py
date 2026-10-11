@@ -281,7 +281,7 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
 class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
                  reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None, push=None,
-                 obs_noise: bool = False):
+                 obs_noise: bool = False, privileged_critic: bool = False):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
         reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
         terrain: 울퉁불퉁한 지형 (biped_sim.terrain.Terrain). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다.
@@ -289,7 +289,9 @@ class BipedWalkMjxEnv(Env):
         friction_range: (최소, 최대) — 환경마다 바닥 마찰 계수를 이 안에서 무작위로 (None = MuJoCo 기본 1.0).
             Brax의 자동 리셋은 첫 리셋 상태로 되돌리므로 환경마다 학습 내내 같은 값 (1024개 환경이 범위를 골고루 나눠 가짐)
         push: (최대 속도 [m/s], 간격 [s]) — 간격마다 몸통을 수평 무작위 방향으로 0~최대 속도만큼 툭 밈 (외란 버티기). None = 없음
-        obs_noise: 관측에 센서 잡음 (OBS_NOISE: 중력 방향 0.02, 각속도 0.05 rad/s, 관절 각도 0.01 rad, 관절 속도 0.5 rad/s)"""
+        obs_noise: 관측에 센서 잡음 (OBS_NOISE: 중력 방향 0.02, 각속도 0.05 rad/s, 관절 각도 0.01 rad, 관절 속도 0.5 rad/s)
+        privileged_critic: 비대칭 actor-critic. 관측을 {"state": 정책이 보는 것(실물 관측·잡음), "privileged_state": 가리지 않은
+            전체 값(잡음 없음)}로 줌 → 학습 중 점수만 매기는 critic(가치 함수)은 시뮬레이션의 모든 정보를 씀 (실물에 올리는 것은 정책뿐)"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
         sp = self.spec
         unknown = set(reward_weights or {}) - set(sp.reward_weights)
@@ -297,6 +299,7 @@ class BipedWalkMjxEnv(Env):
             raise ValueError(f"모르는 보상 항목 {sorted(unknown)} (사용 가능: {sorted(sp.reward_weights)})")
         self.reward_weights = {**sp.reward_weights, **(reward_weights or {})}
         self.terrain, self.spawn_area, self.friction_range, self.push = terrain, spawn_area, friction_range, push
+        self.privileged_critic = privileged_critic
         n = sp.n
         self.noise_scale = None if not obs_noise else jnp.asarray(np.concatenate([
             [OBS_NOISE["gravity"]] * 3, [OBS_NOISE["gyro"]] * 3, [0.0] * 4,          # 중력, 각속도, (속도·높이)
@@ -347,7 +350,9 @@ class BipedWalkMjxEnv(Env):
 
     # ------------------------------------------------------------------ Brax Env API
     @property
-    def observation_size(self) -> int:
+    def observation_size(self):
+        if self.privileged_critic:
+            return {"state": (self.spec.obs_size,), "privileged_state": (self.spec.obs_size,)}
         return self.spec.obs_size
 
     @property
@@ -383,6 +388,8 @@ class BipedWalkMjxEnv(Env):
         metrics.update({f"gait/{k}": jnp.zeros(()) for k in GAIT_METRICS})
         metrics.update({"forward_speed": jnp.zeros(())})
         obs = self._observation(data, info)
+        if self.privileged_critic:
+            obs = {"state": obs, "privileged_state": self._observation(data, info, full=True)}
         return State(pipeline_state=data, obs=obs, reward=jnp.zeros(()), done=jnp.zeros(()),
                      metrics=metrics, info=info)
 
@@ -503,6 +510,9 @@ class BipedWalkMjxEnv(Env):
             rng, key = jax.random.split(info["rng"])
             info["rng"] = rng
             obs = obs + self.noise_scale * jax.random.normal(key, obs.shape)
+        if self.privileged_critic:   # critic용: 가리지 않고 잡음도 없는 전체 관측
+            obs = {"state": obs, "privileged_state": self._observation(data, info, vel_body=vel_body,
+                                                                      ang_body=ang_body, full=True)}
         return state.replace(pipeline_state=data, obs=obs, reward=reward, done=done,
                              metrics=metrics, info=info)
 
@@ -576,7 +586,8 @@ class BipedWalkMjxEnv(Env):
         return 0.5 * (match_left.astype(jnp.float32) + match_right.astype(jnp.float32))
 
     # ------------------------------------------------------------------ 관측
-    def _observation(self, data, info, vel_body=None, ang_body=None) -> jax.Array:
+    def _observation(self, data, info, vel_body=None, ang_body=None, full: bool = False) -> jax.Array:
+        """full=True면 deployable_obs여도 가리지 않음 (비대칭 critic의 privileged_state)."""
         rot = data.xmat[self.base_body]
         if vel_body is None:
             vel_body = rot.T @ data.qvel[0:3]
@@ -584,7 +595,7 @@ class BipedWalkMjxEnv(Env):
         gravity_body = rot.T @ jnp.array([0.0, 0.0, -1.0])
         phase = 2.0 * jnp.pi * info["time"] / self.spec.gait_period
         height = data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2]) - self.spec.nominal_height
-        if self.spec.deployable_obs:   # 실물에 없는 센서 값은 0 (MujocoRunner.obs와 같게)
+        if self.spec.deployable_obs and not full:   # 실물에 없는 센서 값은 0 (MujocoRunner.obs와 같게)
             vel_body, height = jnp.zeros(3), jnp.zeros(())
         return jnp.concatenate([
             gravity_body,

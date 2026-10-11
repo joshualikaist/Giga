@@ -201,6 +201,12 @@ def test_deployable_obs_hides_privileged_values():
     s0 = jax.jit(duck.step)(jax.jit(duck.reset)(jax.random.PRNGKey(0)), jnp.zeros(spec.n))
     diff = np.abs(np.asarray(s1.obs - s0.obs))
     assert diff[0:6].max() > 0 and diff[6:10].max() == 0.0             # IMU 칸엔 잡음, 가린 칸은 그대로 0
+    # 비대칭 critic: 정책 관측은 가린 그대로, critic 관측(privileged_state)에는 실제 속도·높이
+    asym = walk_mjx.BipedWalkMjxEnv(spec, privileged_critic=True)
+    s2 = jax.jit(asym.step)(jax.jit(asym.reset)(jax.random.PRNGKey(0)), jnp.full(spec.n, 0.3))
+    assert set(s2.obs) == {"state", "privileged_state"} and asym.observation_size["state"] == (spec.obs_size,)
+    assert np.all(np.asarray(s2.obs["state"][6:10]) == 0.0) and np.abs(np.asarray(s2.obs["privileged_state"][6:10])).max() > 0
+    np.testing.assert_allclose(np.asarray(s2.obs["state"]), np.asarray(state.obs), atol=1e-5)   # 정책 관측은 그대로
 
 
 def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
