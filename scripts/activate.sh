@@ -30,6 +30,10 @@ if [[ ! -x "${_BIPED_ROOT}/.venv/bin/python" ]]; then
     return 1
 fi
 
+# 다른 가상환경(예: GPU 학습용 .venv-mjx)이 켜져 있으면 먼저 끔. 안 끄면 아래 .venv activate가 그 환경을 끄면서
+# 'ROS를 켜기 전의 PATH'로 되돌려 ros2 명령이 사라짐 (실측: activate_gpu.sh → activate.sh 순서에서 ROS 테스트 실패)
+[[ -n "${VIRTUAL_ENV:-}" ]] && type deactivate >/dev/null 2>&1 && deactivate
+
 if [[ -f /opt/ros/humble/setup.bash ]]; then
     source /opt/ros/humble/setup.bash
 else

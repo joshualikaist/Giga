@@ -32,6 +32,7 @@ from biped_sim.envs import walk_mjx  # noqa: E402  (Brax보다 먼저 import: MJ
 LATEST = paths.OUTPUT_DIR / "learning" / "walk_latest.pkl"   # train_walk_gpu.py가 평가마다 갱신
 EPISODE_SECONDS = 10.0
 STEADY_FROM = 2.0        # [s] 걸음 수치는 출발 구간을 빼고 계산
+MIN_RANGE_DEG = 3.0      # [°] 절뚝임 점수에 넣는 관절의 최소 움직임 범위
 TAP_HEIGHT = 0.015       # [m] 발을 이보다 낮게 들었다 다시 닿으면 걸음이 아니라 '튕김'(tap)으로 봄
 
 
@@ -327,8 +328,11 @@ def gait_metrics(rec: dict, info: dict) -> dict:
 
     L, R = per_side["left"], per_side["right"]
     joints = [n.split("_", 1)[1] for n in joint_names if n.startswith("left_")]
+    # 관절 범위는 좌우 평균이 MIN_RANGE_DEG 이상인 관절만: 거의 안 움직이는 관절(오리 hip_yaw 1~2°)은 좌우 비율이 크게 부풀어
+    # 절뚝임 점수를 흔듦 (예: 1.3 / 0.9° → 37 %). docs/10 2차부터
+    moving = [j for j in joints if 0.5 * (L[f"{j}_range_deg"] + R[f"{j}_range_deg"]) >= MIN_RANGE_DEG]
     symmetry = {k: si(L[k], R[k]) for k in ("step_length_m", "stance_s", "swing_s", "clearance_m",
-                                            *[f"{j}_range_deg" for j in joints])}
+                                            *[f"{j}_range_deg" for j in moving])}
     # 박자: 왼발 착지 → 오른발 착지까지가 한 주기의 몇 %인가 (번갈아 걸으면 50 %)
     phase = []
     for a, b in zip(touchdowns["left"][:-1], touchdowns["left"][1:]):

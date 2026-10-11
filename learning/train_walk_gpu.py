@@ -215,10 +215,11 @@ def main():
         writer.add_scalar("walk/com_shift_cm", com_shift_cm, step)
         clearance_cm = 100.0 * gait["clearance"] / max(gait["landing"], 1e-6)  # 걸음마다 흔듦 최고 발 높이 평균
         writer.add_scalar("walk/foot_clearance_cm", clearance_cm, step)
+        writer.add_scalar("walk/servo_over_pct", 100.0 * gait["servo_over"], step)   # 데이터시트 한계 밖 [%]
         writer.flush()
         print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
-              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | 발 들기 {clearance_cm:4.1f} cm | "
+              f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | 발 들기 {clearance_cm:4.1f} cm | 서보 한계 밖 {100 * gait['servo_over']:4.1f}% | "
               f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)

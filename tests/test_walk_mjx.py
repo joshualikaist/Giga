@@ -157,6 +157,8 @@ def test_feasibility_estimates_for_open_duck():
     assert F.available_torque(np.array([1.0, 1.0]), np.array([0.0, F.SERVO["noload"]]), "datasheet") == \
         pytest.approx([F.SERVO["stall"], 0.0])
     assert F.available_torque(np.array([1.0]), np.array([-3.0]), "datasheet")[0] > F.SERVO["stall"]    # 브레이크 방향
+    # 학습 보상 servo_overload가 쓰는 데이터시트 값 = 이 분석의 값
+    assert walk_mjx.SERVO_DATASHEET == {"stall": F.SERVO["stall"], "noload": F.SERVO["noload"]}
 
 
 def test_evaluate_walk_writes_report(tmp_path):

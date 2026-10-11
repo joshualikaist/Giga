@@ -69,9 +69,13 @@ REWARD_WEIGHTS = {
     "com_over_stance": 0.0,     # 한 발로 설 때 무게중심이 디딤 쪽 고관절(hip_roll 축)로 옮겨 간 거리 / COM_SHIFT_TARGET (0~1).
                                 #   발목 roll이 없는 오리는 hip_roll이 옆 기울기를 혼자 버티므로, 옮길수록 hip_roll 토크가 줄어듦
                                 #   (0 → 0.90, 2.4 cm → 0.50 N·m). 기본 0 = 꺼짐. WalkSpec.hip_roll_joints가 있는 로봇만 (docs/09 §9.6)
+    "servo_overload": 0.0,      # Σ(관절마다 데이터시트 토크-속도 한계를 넘은 만큼)² [N·m²], 물리 스텝 평균. 넘지 않으면 0.
+                                #   모터 토크 = 명령 − 관절 damping × 속도, 한계 = 정지 토크 − (정지/무부하)·부호(τ)·ω (docs/09 §8.7).
+                                #   기본 0 = 꺼짐. 실물 서보(STS3215 7.4 V)가 못 내는 토크를 쓰지 않게 (docs/10 2차)
     "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
                                 #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
 }
+SERVO_DATASHEET = {"stall": 1.91, "noload": 4.4}   # [N·m], [rad/s] STS3215 7.4 V (19.5 kg·cm, 0.238 s/60°) = feasibility.SERVO
 COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§8.6 LIPM 상한, hip_roll 정적 토크가 정격 아래로)
 # 보상을 하나씩 더해 온 과정 (simple_biped 실측, docs/08 §5~6):
 #   flight·gait_phase가 없으면 → 두 발을 다 띄우고 깡충깡충 뜀 (공중 70 %)
@@ -80,7 +84,7 @@ COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
 GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry", "com_shift",
-                "landing", "clearance")
+                "landing", "clearance", "servo_over")
 
 
 @dataclass(frozen=True)
@@ -303,6 +307,7 @@ class BipedWalkMjxEnv(Env):
         self.act_low, self.act_high = f32(info["act_range"][:, 0]), f32(info["act_range"][:, 1])
         self.kp, self.kd = f32(info["kp"]), f32(info["kd"])
         self.tau_low, self.tau_high = f32(info["tau_limit"][:, 0]), f32(info["tau_limit"][:, 1])
+        self.act_damping = f32(self.mj_model.dof_damping[info["act_qvel_idx"]])   # 실측 서보 모델이면 0.56
         self.base_body = info["base_body"]
         self.foot_bodies = jnp.asarray(info["foot_bodies"])
         self.home_qpos = f32(info["home_qpos"])
@@ -386,9 +391,10 @@ class BipedWalkMjxEnv(Env):
             dq = data.qvel[self.act_qvel_idx]
             tau = jnp.clip(self.kp * (q_des - q) - self.kd * dq, self.tau_low, self.tau_high)
             data = mjx.step(mx, data.replace(ctrl=tau))
-            return data, tau
+            return data, (tau, dq)
 
-        data, taus = jax.lax.scan(substep, state.pipeline_state, None, length=self.n_substeps)
+        data, (taus, dqs) = jax.lax.scan(substep, state.pipeline_state, None, length=self.n_substeps)
+        overload, over_frac = self._servo_overload(taus, dqs)
         info = dict(state.info)
         info["time"] = state.info["time"] + CONTROL_DT
 
@@ -438,6 +444,7 @@ class BipedWalkMjxEnv(Env):
             "feet_air_time": air_reward,
             "action_rate": jnp.sum(jnp.square(action - state.info["last_action"])),
             "torque": jnp.sum(jnp.square(taus[-1])),
+            "servo_overload": overload,
             "alive": jnp.ones(()),
             "heading": jnp.square(yaw),
             "flight": jnp.where(contact.any(), 0.0, 1.0),
@@ -467,11 +474,21 @@ class BipedWalkMjxEnv(Env):
             "gait/com_shift": com_shift,                             # 한 발 지지 때 무게중심 이동 [m] (그 외 0)
             "gait/landing": jnp.sum(real_step).astype(jnp.float32),  # 이번 스텝에 걸음으로 착지한 발 수
             "gait/clearance": jnp.sum(real_step * peak),             # 그 착지들의 흔듦 최고 높이 합 [m]
+            "gait/servo_over": over_frac,                            # 정책 관절이 데이터시트 한계 밖인 비율 (물리 스텝 평균)
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)
         return state.replace(pipeline_state=data, obs=obs, reward=reward, done=done,
                              metrics=metrics, info=info)
+
+    def _servo_overload(self, taus, dqs):
+        """제어 스텝 동안(물리 스텝 n개) 모터 토크가 서보 데이터시트 한계를 넘은 정도.
+        taus, dqs: [n, 구동 관절]. 돌려줌: (Σ넘은 만큼² 의 물리 스텝 평균 [N·m²], 정책 관절이 넘은 비율)"""
+        net = taus - self.act_damping * dqs                                   # 역기전력 damping을 뺀 모터 토크
+        k = SERVO_DATASHEET["stall"] / SERVO_DATASHEET["noload"]
+        avail = jnp.clip(SERVO_DATASHEET["stall"] - k * jnp.sign(net) * dqs, 0.0, None)
+        excess = jax.nn.relu(jnp.abs(net) - avail)
+        return jnp.mean(jnp.sum(jnp.square(excess), axis=-1)), jnp.mean(excess[:, self.policy_act] > 0)
 
     def _com_shift(self, data, yaw, contact):
         """한 발로 설 때 무게중심이 home 자세보다 디딤 쪽 hip_roll 축으로 얼마나 옮겨 갔나 [m] (몸통 방향 기준 옆으로).
