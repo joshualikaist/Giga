@@ -174,6 +174,7 @@ class Dashboard:
 
     finished = False   # 학습이 끝났으면 True (play_walk가 config.json의 finished를 보고 바꿈)
     scene = None       # 지금 화면의 지형 설명 (예: "hills, difficulty 1.5"). None = 평지
+    command = None     # 명령 따라 걷기 정책의 지금 명령 (vx, vy, wz). None = 명령 없음 (목표 속도로 직진)
 
     def set_policy(self, config: dict, run_dir: Path | None, reloaded: bool = True) -> None:
         self.config = config
@@ -223,7 +224,8 @@ class Dashboard:
             top_lines = fit_lines([
                 "TRAINING FINISHED (replaying final policy, close window to exit)" if self.finished else "LIVE TRAINING",
                 run, f"step {step}{progress}", f"survives {alive[-1][1]:.1f} / 10 s" if alive else "",
-                f"policy reloads {self.reloads}", f"terrain: {self.scene}" if self.scene else ""], w)
+                f"policy reloads {self.reloads}", f"terrain: {self.scene}" if self.scene else "",
+                self._command_text()], w)
             bottom_lines = fit_lines([
                 "[Enter] robot view", f"t {t:4.1f} s   {state['vx']:+.2f} m/s",
                 f"last 4 s: both feet in air {self.recent[0]:.0f}%, one foot {self.recent[1]:.0f}%"], w, sep="   |   ")
@@ -246,13 +248,23 @@ class Dashboard:
             viewer.set_figures([(mujoco.MjrRect(0, 0, w, int(0.27 * h)), self.figs["gait"])])
             viewer.set_texts([
                 (font, grid.mjGRID_TOPLEFT,
-                 "training step\npolicy reloads\nterrain\nepisode time\nforward speed\ndistance\nfeet on ground (L R)",
+                 "training step\npolicy reloads\nterrain\nepisode time\nforward speed\ndistance\nfeet on ground (L R)"
+                 + ("\ncommand\nkeys" if self.command is not None else ""),
                  f"{step}{progress}{' (finished)' if self.finished else ''}\n{self.reloads}\n{self.scene or 'flat'}\n"
-                 f"{t:5.2f} s / 10 s\n{state['vx']:+.2f} m/s (target {self.config['target_speed']:.2f})\n{distance:+.2f} m\n"
-                 f"{'#' if contact[0] else '.'}   {'#' if contact[1] else '.'}"),
+                 f"{t:5.2f} s\n{state['vx']:+.2f} m/s"
+                 + ("" if self.command is not None else f" (target {self.config['target_speed']:.2f})")
+                 + f"\n{distance:+.2f} m\n{'#' if contact[0] else '.'}   {'#' if contact[1] else '.'}"
+                 + (f"\n{self._command_text()}\nUp/Down speed, Left/Right turn, PgUp/PgDn sideways, Backspace stop"
+                    if self.command is not None else "")),
                 (font, grid.mjGRID_TOPRIGHT, "[Enter] training graphs\n\nlast 4 s\nboth feet in air\none foot",
                  f"\n\n\n{self.recent[0]:.0f} %\n{self.recent[1]:.0f} %"),
             ])
+
+    def _command_text(self) -> str:
+        if self.command is None:
+            return ""
+        vx, vy, wz = (float(v) for v in self.command)
+        return f"command vx {vx:+.2f} vy {vy:+.2f} m/s, turn {wz:+.2f} rad/s"
 
     def _fill_gait_figure(self) -> None:
         """보행 방식: 위 = 왼발, 아래 = 오른발. 높으면 땅을 딛고 있음. 흐린 선 = gait_phase 보상이 원하는 박자."""

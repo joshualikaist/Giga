@@ -11,6 +11,11 @@
 지형: 울퉁불퉁한 지형에서 학습한 정책(--terrain rough)은 화면에서도 에피소드마다 언덕 → 경사로 → 장애물 → 섞인 코스를
     번갈아 보여 준다 (평가와 같은 시험 지형, 매번 새로 만듦). --terrain flat이면 평지만.
 
+명령 따라 걷기 정책 (docs/09 §10):
+    --view  방향키로 조종: ↑↓ 앞뒤 속도 ±0.05 m/s, ←→ 회전 ±0.1 rad/s, PageUp/PageDown 옆 ±0.04 m/s,
+            Backspace 멈춤(제자리 걸음), Home 기본(앞 0.15). 에피소드 60초
+    --live  에피소드마다 학습한 명령 범위 안의 명령을 번갈아 보여 줌 (앞 빠르게·느리게, 뒤로, 돌기, 옆으로)
+
 화면에서 Enter 키: [학습 현황](그래프 + 가운데 로봇) ↔ [로봇 보기](로봇 크게 + 발 접촉 그래프)
     --live는 학습 현황, --view는 로봇 보기로 시작. 그래프는 learning/live_dashboard.py
 
@@ -23,6 +28,8 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
+
 from walk_tools import (LATEST, find_run_dir, gait_metrics, get_spec, load_policy, make_runner, run_episode,
                         summary_lines)
 
@@ -30,6 +37,19 @@ from biped_sim import passive_viewer, track_body_camera
 from biped_sim.terrain import make_terrain
 
 ROUGH_KINDS = ("hills", "slopes", "obstacles", "mixed")   # 화면에서 번갈아 보여 줄 지형 (평가의 시험 지형)
+# 명령 따라 걷기: 학습 화면에서 번갈아 보여 줄 명령 (학습한 범위 안의 것만), 방향키 조종
+SHOWCASE = [(0.15, 0.0, 0.0), (0.25, 0.0, 0.0), (0.05, 0.0, 0.0), (-0.08, 0.0, 0.0), (0.10, 0.0, 0.4), (0.10, 0.0, -0.4),
+            (0.0, 0.0, 0.4), (0.0, 0.08, 0.0), (0.0, -0.08, 0.0)]
+KEYS = {265: (0, +0.05), 264: (0, -0.05), 263: (2, +0.1), 262: (2, -0.1), 266: (1, +0.04), 267: (1, -0.04)}   # GLFW 키 번호
+LIMITS = [(-0.15, 0.30), (-0.12, 0.12), (-0.8, 0.8)]   # 방향키로 줄 수 있는 명령 범위 (vx, vy, wz)
+
+
+def showcase_commands(config) -> list:
+    """학습한 명령 범위(config['commands']) 안에 드는 SHOWCASE 명령들."""
+    rng = config.get("commands") or {}
+    inside = [c for c in SHOWCASE if all(rng.get(k, (0, 0))[0] - 1e-9 <= v <= rng.get(k, (0, 0))[1] + 1e-9
+                                         for k, v in zip(("vx", "vy", "wz"), c))]
+    return inside or [(config.get("target_speed", 0.15), 0.0, 0.0)]
 
 
 def main():
@@ -74,13 +94,35 @@ def main():
 
     loaded_mtime = params_path.stat().st_mtime if policy is not None else None
     dash = Dashboard(get_spec(config), config, find_run_dir(params_path, config), mode="graphs" if args.live else "robot")
+    command_mode = runner.spec.command_obs
+    teleop = command_mode and args.view and not args.live
+    if command_mode:
+        dash.command = runner.command
+    last_key = {}
+
+    def on_key(keycode):   # Enter = 화면 전환 (Dashboard), 방향키 = 명령 (조종 모드)
+        dash.key_callback(keycode)
+        if not teleop or (keycode not in KEYS and keycode not in (259, 268)):
+            return
+        now = time.monotonic()
+        if now - last_key.get(keycode, 0.0) < 0.3:   # 뷰어는 누를 때·뗄 때 두 번 부름
+            return
+        last_key[keycode] = now
+        if keycode == 259:      # Backspace: 멈춤 (제자리 걸음)
+            runner.command[:] = 0.0
+        elif keycode == 268:    # Home: 기본 명령
+            runner.command[:] = (0.15, 0.0, 0.0)
+        else:
+            i, dv = KEYS[keycode]
+            runner.command[i] = float(np.clip(runner.command[i] + dv, *LIMITS[i]))
+        print(f"  명령: 앞뒤 {runner.command[0]:+.2f} m/s, 옆 {runner.command[1]:+.2f} m/s, 회전 {runner.command[2]:+.2f} rad/s")
     print("화면 재생: 넘어지거나 10초가 지나면 처음부터 다시. Enter = 그래프 ↔ 로봇 화면 전환. "
           "종료: 창 닫기 또는 Ctrl+C")
     if args.live:
         print("실시간 모드: 학습이 새 정책을 저장하면 다음 에피소드부터 자동으로 바뀝니다.")
     try:
         # 설정 패널은 숨김 (그래프와 겹치지 않게). 창에서 Tab / Shift+Tab으로 켤 수 있음
-        with passive_viewer(runner.model, runner.data, show_ui=False, key_callback=dash.key_callback) as viewer:
+        with passive_viewer(runner.model, runner.data, show_ui=False, key_callback=on_key) as viewer:
             with viewer.lock():
                 # 로봇 크기에 맞춘 거리 (simple_biped 2.5 m, 오리 약 1.7 m)
                 track_body_camera(runner.info["base_body"], distance=1.67 * runner.spec.view_distance,
@@ -113,8 +155,13 @@ def main():
                     viewer.update_hfield(runner.model.hfield("terrain").id)
                     dash.scene = f"{kind}, difficulty {difficulty:g}"
                     print(f"  지형: {dash.scene}")
+                if command_mode and not teleop:   # 학습 화면: 에피소드마다 다른 명령
+                    shows = showcase_commands(config)
+                    runner.command[:] = shows[(episode - 1) % len(shows)]
+                    print(f"  명령: {tuple(round(float(v), 2) for v in runner.command)}")
                 dash.start_episode()
-                rec = run_episode(runner, policy, viewer, on_step=lambda state: dash.on_step(viewer, state))
+                rec = run_episode(runner, policy, viewer, on_step=lambda state: dash.on_step(viewer, state),
+                                  seconds=60.0 if teleop else 10.0)
                 print("\n".join(summary_lines(gait_metrics(rec, runner.info))))
                 time.sleep(0.5)
     except KeyboardInterrupt:

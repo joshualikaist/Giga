@@ -55,6 +55,64 @@ from biped_sim import paths
 RUNS_DIR = paths.OUTPUT_DIR / "learning"
 
 
+def add_command_inputs(params, base_old: int, history: int, privileged: bool, commands: dict):
+    """목표 속도 1칸으로 학습한 정책 → 명령 3칸(vx, vy, wz) 정책. 관측 블록(지금 + 기록)마다 목표 속도 칸(= base_old − 3, vx로
+    그대로 씀) 뒤에 vy·wz 두 칸을 끼움: 정책 첫 층 가중치는 0 행, 관측 통계는 명령 범위에 맞춤. 예전 목표 속도 칸은 늘 같은 값이라
+    σ가 0에 가까웠으므로 명령 범위의 평균·σ로 바꿈 (vx = 그 평균이면 정규화 값 0 → 예전과 같은 입력). critic은 새로 만듦."""
+    import jax.numpy as jnp
+    import numpy as np
+    norm, policy, value = params
+    blocks = 1 + history
+
+    def insert(x, values):   # 블록마다 목표 속도 칸 뒤(sin·cos 앞)에 values 2개를 끼움
+        x = np.asarray(x)
+        out = []
+        for b in range(blocks):
+            blk = x[b * base_old:(b + 1) * base_old]
+            out.append(np.concatenate([blk[:base_old - 2], np.broadcast_to(values, (2,) + blk.shape[1:]), blk[base_old - 2:]]))
+        return jnp.asarray(np.concatenate(out))
+
+    layer = policy["params"]["hidden_0"]
+    zeros_row = np.zeros((2, layer["kernel"].shape[1]))
+    kernel = []
+    k = np.asarray(layer["kernel"])
+    for b in range(blocks):
+        blk = k[b * base_old:(b + 1) * base_old]
+        kernel.append(np.concatenate([blk[:base_old - 2], zeros_row, blk[base_old - 2:]]))
+    policy = {"params": {**policy["params"], "hidden_0": {**layer, "kernel": jnp.asarray(np.concatenate(kernel))}}}
+
+    # 명령 칸 통계: 범위 [lo, hi]의 균일 분포 평균·σ (σ가 0이면 0.05로)
+    def stats(key):
+        lo, hi = commands[key]
+        return (lo + hi) / 2, max((hi - lo) / np.sqrt(12), 0.05)
+    (mx, sx), (my, sy), (mw, sw) = stats("vx"), stats("vy"), stats("wz")
+
+    def widen(mean, std, var, single):
+        n_blocks = 1 if single else blocks
+        mean, std, var = np.array(mean), np.array(std), np.array(var)
+        count = float(var[10] / std[10] ** 2)   # 관절 각도 칸으로 지금까지의 표본 수 추정
+        for b in range(n_blocks):               # 예전 목표 속도 칸 → vx 명령의 통계
+            i = b * base_old + base_old - 3
+            mean[i], std[i], var[i] = mx, sx, sx ** 2 * count
+        out = []
+        for b in range(n_blocks):
+            sl = slice(b * base_old, (b + 1) * base_old)
+            out.append([np.concatenate([a[sl][:base_old - 2], new, a[sl][base_old - 2:]])
+                        for a, new in ((mean, [my, mw]), (std, [sy, sw]), (var, [sy ** 2 * count, sw ** 2 * count]))])
+        return [jnp.asarray(np.concatenate([o[j] for o in out])) for j in range(3)]
+
+    if privileged:
+        st = widen(norm.mean["state"], norm.std["state"], norm.summed_variance["state"], single=False)
+        pr = widen(norm.mean["privileged_state"], norm.std["privileged_state"], norm.summed_variance["privileged_state"],
+                   single=True)
+        norm = norm.replace(mean={"state": st[0], "privileged_state": pr[0]}, std={"state": st[1], "privileged_state": pr[1]},
+                            summed_variance={"state": st[2], "privileged_state": pr[2]})
+    else:
+        st = widen(norm.mean, norm.std, norm.summed_variance, single=False)
+        norm = norm.replace(mean=st[0], std=st[1], summed_variance=st[2])
+    return norm, policy, value
+
+
 def add_history_inputs(params, base_size: int, history: int, privileged: bool):
     """기록 없이 학습한 정책 → 관측 기록 history 스텝을 받는 정책. 정책 첫 층 가중치에 새 입력(지난 관측)용 행을 0으로
     붙이고(처음엔 같은 행동), 관측 통계는 지금 관측의 통계를 지난 관측 칸에도 복사 (같은 종류의 값이라서)."""
@@ -116,6 +174,11 @@ def main():
     parser.add_argument("--privileged-critic", action="store_true",
                         help="비대칭 actor-critic: 정책은 실물 관측만, 학습 중 점수만 매기는 critic은 시뮬레이션의 모든 정보 "
                              "(--deployable-obs와 함께. 실물에 올리는 정책은 그대로)")
+    parser.add_argument("--cmd-vx", type=float, nargs=2, default=None, metavar=("최소", "최대"),
+                        help="명령 따라 걷기: 앞뒤 속도 명령 범위 [m/s] (음수 = 뒤로). --cmd-* 중 하나라도 주면 명령 모드")
+    parser.add_argument("--cmd-vy", type=float, nargs=2, default=None, metavar=("최소", "최대"), help="옆 속도 명령 범위 [m/s]")
+    parser.add_argument("--cmd-wz", type=float, nargs=2, default=None, metavar=("최소", "최대"), help="회전 속도 명령 범위 [rad/s]")
+    parser.add_argument("--cmd-resample", type=float, default=5.0, metavar="S", help="학습 중 명령을 바꾸는 간격 [s]")
     parser.add_argument("--obs-history", type=int, default=0, metavar="H",
                         help="정책 관측에 지난 H 제어 스텝의 관측을 이어 붙임 (지난 움직임에서 실물 차이를 짐작). "
                              "기록 없이 학습한 정책에서 이어 가면 새 입력의 가중치를 0으로 시작 (처음엔 같은 행동)")
@@ -163,6 +226,12 @@ def main():
     if args.obs_history:
         import dataclasses
         spec = dataclasses.replace(spec, obs_history=args.obs_history)
+    commands = None
+    if args.cmd_vx or args.cmd_vy or args.cmd_wz:   # 명령 따라 걷기
+        import dataclasses
+        spec = dataclasses.replace(spec, command_obs=True)
+        commands = {"vx": tuple(args.cmd_vx or walk_mjx.COMMANDS_DEFAULT["vx"]), "vy": tuple(args.cmd_vy or (0.0, 0.0)),
+                    "wz": tuple(args.cmd_wz or (0.0, 0.0)), "resample": args.cmd_resample}
     if not spec.robot.urdf.exists():
         raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
     speed = spec.target_speed if args.speed is None else args.speed
@@ -196,6 +265,7 @@ def main():
         "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee, "push": args.push,
         "deployable_obs": args.deployable_obs, "privileged_critic": args.privileged_critic,
         "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None, "obs_history": args.obs_history,
+        "command_obs": commands is not None, "commands": commands,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -215,7 +285,9 @@ def main():
           + (", 실물 관측만(속도·높이 가림)+센서 잡음" if args.deployable_obs else "")
           + (", 비대칭 critic(전체 정보)" if args.privileged_critic else "")
           + (", 질량·모터·무게중심·지연 무작위" if args.domain_rand else "")
-          + (f", 관측 기록 {args.obs_history}스텝" if args.obs_history else ""))
+          + (f", 관측 기록 {args.obs_history}스텝" if args.obs_history else "")
+          + (f"\n명령 따라 걷기: vx {commands['vx']}, vy {commands['vy']} m/s, wz {commands['wz']} rad/s, "
+             f"{commands['resample']:g}초마다 바뀜" if commands else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -240,7 +312,8 @@ def main():
     env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
                                    spawn_area=spawn_area, friction_range=args.friction,
                                    push=tuple(args.push) if args.push else None, obs_noise=args.deployable_obs,
-                                   privileged_critic=args.privileged_critic, domain_rand=args.domain_rand)
+                                   privileged_critic=args.privileged_critic, domain_rand=args.domain_rand,
+                                   commands=commands)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()
@@ -270,11 +343,14 @@ def main():
         clearance_cm = 100.0 * gait["clearance"] / max(gait["landing"], 1e-6)  # 걸음마다 흔듦 최고 발 높이 평균
         writer.add_scalar("walk/foot_clearance_cm", clearance_cm, step)
         writer.add_scalar("walk/servo_over_pct", 100.0 * gait["servo_over"], step)   # 데이터시트 한계 밖 [%]
+        writer.add_scalar("walk/track_lin_mps", gait["track_lin"], step)    # 속도 명령과의 차이 (명령 모드가 아니면 목표 속도와)
+        writer.add_scalar("walk/track_yaw_rps", gait["track_yaw"], step)    # 회전 명령과의 차이
         writer.flush()
         print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
               f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | 발 들기 {clearance_cm:4.1f} cm | 서보 한계 밖 {100 * gait['servo_over']:4.1f}% | "
-              f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
+              + (f"명령 오차 {gait['track_lin']:.3f} m/s·{gait['track_yaw']:.2f} rad/s | " if commands else "")
+              + f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)
         # 설정(json)을 먼저, 정책(pkl)을 나중에 바꿔야 재생 쪽이 '새 pkl + 옛 json'을 읽는 일이 없음
@@ -304,6 +380,10 @@ def main():
         if args.privileged_critic and not init_config.get("privileged_critic"):
             restore, restore_value = to_privileged_params(restore), False
             print("이어서 학습: 정책·관측 통계는 그대로, critic은 새로 (비대칭 critic으로 바꿈)")
+        if commands is not None and not init_config.get("command_obs"):
+            restore = add_command_inputs(restore, spec.base_obs_size - 2, args.obs_history, args.privileged_critic, commands)
+            restore_value = False
+            print("이어서 학습: 목표 속도 1칸 → 명령 3칸 (새 입력 가중치 0, 명령 vx = 0.15면 처음엔 같은 행동), critic은 새로")
         old_h = int(init_config.get("obs_history") or 0)
         if args.obs_history != old_h:
             if old_h:

@@ -271,6 +271,47 @@ def test_obs_history_and_parameter_expansion(tmp_path):
         obs = runner.step(action)
 
 
+def test_command_mode_conversion_and_tracking(tmp_path):
+    """명령 따라 걷기: ① 학습 환경이 모든 학습 옵션(잡음·기록·비대칭 critic·무작위화)과 함께 명령 3칸 관측을 만들고 명령을 바꿈
+    ② 목표 속도 1칸 정책을 명령 3칸으로 늘리면 명령 vx = 예전 목표 속도일 때 같은 행동 ③ 명령 시험의 속도 측정이 맞음."""
+    import dataclasses
+    import json
+
+    from brax.io import model as brax_model
+    from evaluate_walk import command_tracking
+    from train_walk_gpu import add_command_inputs
+    from walk_tools import load_policy, make_runner, run_episode
+
+    spec = dataclasses.replace(walk_mjx.SPECS["simple_biped"], command_obs=True, deployable_obs=True, obs_history=2)
+    env = walk_mjx.BipedWalkMjxEnv(spec, privileged_critic=True, domain_rand=True, obs_noise=True, push=(0.3, 1.0),
+                                   commands={"vx": (0.2, 0.4), "wz": (-0.3, 0.3), "resample": 0.5})
+    state = jax.jit(env.reset)(jax.random.PRNGKey(1))
+    step = jax.jit(env.step)
+    first = np.asarray(state.info["command"])
+    for _ in range(30):
+        state = step(state, jnp.zeros(spec.n))
+    assert state.obs["state"].shape == (spec.base_obs_size * 3,) and spec.base_obs_size == 13 + 3 * spec.n + 2
+    assert not np.allclose(np.asarray(state.info["command"]), first)          # 0.5초마다 새 명령
+
+    src = LEARNING_DIR / "pretrained" / "walk_policy.pkl"
+    policy, config = load_policy(src)                                          # 목표 속도 0.3으로 학습한 정책
+    cmds = {"vx": (0.2, 0.4), "vy": (0.0, 0.0), "wz": (0.0, 0.0), "resample": 5.0}
+    wide = add_command_inputs(brax_model.load_params(str(src)), 13 + 3 * 6, 0, False, cmds)
+    brax_model.save_params(str(tmp_path / "params.pkl"), wide)
+    (tmp_path / "config.json").write_text(json.dumps({**config, "command_obs": True, "commands": cmds}))
+    cmd_policy, cmd_config = load_policy(tmp_path / "params.pkl")
+    old, new = make_runner(config), make_runner(cmd_config)
+    new.command[:] = (0.3, 0.0, 0.0)
+    o_old, o_new = old.reset(), new.reset()
+    for _ in range(50):
+        a_old, a_new = policy(o_old), cmd_policy(o_new)
+        np.testing.assert_allclose(a_new, a_old, atol=1e-5)
+        o_old, o_new = old.step(a_old), new.step(a_new)
+
+    v, w = command_tracking(run_episode(make_runner(config), policy))
+    assert abs(v[0] - 0.3) < 0.05 and abs(v[1]) < 0.05 and abs(w) < 0.1      # 목표 0.3 m/s로 곧게 걷는 정책
+
+
 def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
     """절뚝임 점수에서 뺀 관절(거의 안 움직임)이 있어도 걸음 그래프·출력이 동작 (2026-10-11 자동 평가가 여기서 멈춘 적 있음)."""
     from analyze_gait import print_report, save_plots

@@ -39,6 +39,52 @@ MODEL_ERROR_TEST = {
     # 조립 오차: 관절마다 서보 영점 ±0.03 rad(≈2°, 고정된 무작위 패턴), IMU가 앞·옆으로 2°씩 기울게 붙음, 20 ms 지연
     "miscalibrated": dict(mass=1.0, motor=1.0, com=(0.0, 0.0), delay=1, joint_offset=0.03, imu_tilt=(0.035, 0.035)),
 }
+# 명령 시험 (명령 따라 걷기 정책): 명령마다 평지 1번 + 섞인 코스(험한 정도 1.0) 2번, 10초씩.
+# 성공 = 10초 버팀 + 2초 뒤부터의 평균 속도(몸통 방향 기준)가 명령에서 ±0.03 m/s, 회전 속도가 ±0.1 rad/s 안
+COMMAND_TEST = [("forward 0.05", (0.05, 0.0, 0.0)), ("forward 0.10", (0.10, 0.0, 0.0)), ("forward 0.20", (0.20, 0.0, 0.0)),
+                ("forward 0.25", (0.25, 0.0, 0.0)), ("backward 0.08", (-0.08, 0.0, 0.0)),
+                ("turn left walking", (0.10, 0.0, 0.4)), ("turn right walking", (0.10, 0.0, -0.4)),
+                ("turn left in place", (0.0, 0.0, 0.4)), ("turn right in place", (0.0, 0.0, -0.4)),
+                ("step left", (0.0, 0.08, 0.0)), ("step right", (0.0, -0.08, 0.0))]
+COMMAND_TOL = {"lin": 0.03, "yaw": 0.1}
+COMMAND_LABELS = {"forward 0.05": "앞 0.05", "forward 0.10": "앞 0.10", "forward 0.20": "앞 0.20", "forward 0.25": "앞 0.25",
+                  "backward 0.08": "뒤 0.08", "turn left walking": "걸으며 왼쪽 돌기", "turn right walking": "걸으며 오른쪽 돌기",
+                  "turn left in place": "제자리 왼쪽 돌기", "turn right in place": "제자리 오른쪽 돌기",
+                  "step left": "왼쪽 옆걸음", "step right": "오른쪽 옆걸음"}
+
+
+def command_tracking(rec, steady_s: float = 2.0) -> tuple[np.ndarray, float]:
+    """기록 → 2초 뒤부터의 평균 (앞뒤, 옆) 속도 [m/s] (그때그때 몸통 방향 기준)와 평균 회전 속도 [rad/s]."""
+    t, base, yaw = rec["t"], np.asarray(rec["base"]), np.unwrap(np.asarray(rec["rpy"])[:, 2])
+    k = t >= min(steady_s, t[-1] / 2)
+    v = np.diff(base[:, :2], axis=0) / np.diff(t)[:, None]
+    c, s_ = np.cos(yaw[1:]), np.sin(yaw[1:])
+    v_head = np.stack([c * v[:, 0] + s_ * v[:, 1], -s_ * v[:, 0] + c * v[:, 1]], axis=1)[k[1:]]
+    duration = t[k][-1] - t[k][0]
+    yaw_rate = (yaw[k][-1] - yaw[k][0]) / max(duration, 1e-6)
+    return v_head.mean(axis=0), float(yaw_rate)
+
+
+def command_trials(config, policy, seed=0) -> dict:
+    """COMMAND_TEST의 명령마다 평지 1번 + 섞인 코스 1.0 두 번. {이름: {ok, trials, survived, err_lin, err_yaw}}"""
+    out = {}
+    for name, cmd in COMMAND_TEST:
+        rows = []
+        for terrain in (None, make_terrain("mixed", seed=seed * 1000 + 1, difficulty=1.0),
+                        make_terrain("mixed", seed=seed * 1000 + 2, difficulty=1.0)):
+            runner = make_runner(config, terrain=terrain)
+            runner.command = np.array(cmd)
+            rec = run_episode(runner, policy)
+            v, w = command_tracking(rec)
+            err_lin, err_yaw = float(np.linalg.norm(v - np.array(cmd[:2]))), abs(w - cmd[2])
+            ok = (not rec["fell"]) and err_lin <= COMMAND_TOL["lin"] and err_yaw <= COMMAND_TOL["yaw"]
+            rows.append((ok, not rec["fell"], err_lin, err_yaw))
+        ok, alive, el, ey = zip(*rows)
+        out[name] = {"ok": int(sum(ok)), "trials": len(rows), "survived": int(sum(alive)),
+                     "err_lin": float(np.mean(el)), "err_yaw": float(np.mean(ey))}
+    return out
+
+
 MODEL_ERROR_LABELS = {"heavy_weak_slow": "무겁고·약하고·40 ms", "light_strong": "가볍고·세고·20 ms",
                       "miscalibrated": "조립 오차(관절·IMU 2°)·20 ms"}
 
@@ -115,7 +161,7 @@ def beats_champion(new: dict, old: dict | None) -> tuple[bool, str]:
         return True, "첫 챔피언"
     if new["score"] > old["score"]:
         return True, "보행 점수가 높음"
-    n = new.get("trials_rough") or 160
+    n = new.get("score_trials") or new.get("trials_rough") or 160
     a, b = old["score"] * n / 100, new["score"] * n / 100
     score_tie = not _pm(b - a, n, (a + b) / (2 * n))
     key = "robust" if new.get("robust_trials") and old.get("robust_trials") == new["robust_trials"] else "push"
@@ -162,6 +208,12 @@ def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> 
             print(f"  [{label}] 험한 정도 {d:.1f}, 마찰 {mu:.1f}: "
                   + ", ".join(f"{k} {n}/{args.episodes}" for k, n in result["terrain"][cond].items()), flush=True)
 
+    if spec.command_obs or args.commands:   # 명령 시험 (명령을 안 받는 예전 정책도 비교용으로 걸려 봄: 늘 0.15로 직진)
+        result["commands"] = command_trials(config, policy, args.seed)
+        n_ok = sum(c["ok"] for c in result["commands"].values())
+        n_all = sum(c["trials"] for c in result["commands"].values())
+        print(f"  [{label}] 명령 시험: {n_ok}/{n_all} 성공 — " + ", ".join(
+            f"{COMMAND_LABELS[k]} {c['ok']}/{c['trials']}" for k, c in result["commands"].items()), flush=True)
     runner = make_runner(config)
     result["push"] = {f"{v:g}": int(sum(push_trials(runner, policy, v, PUSH_TEST["interval"], args.episodes, args.seed)))
                       for v in PUSH_TEST["speeds"]}
@@ -328,6 +380,14 @@ def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, ba
            "|---|---|" + ("---|" if base else "")]
     for name, f, fmt in rows:
         md.append(f"| {name} | " + (f"{fmt.format(gv(bg, f))} | " if base else "") + f"{fmt.format(gv(g, f))} |")
+    if new.get("commands"):
+        md += ["", "## 4. 명령 따라 걷기 (명령마다 3번: 평지 1 + 섞인 코스 1.0 2, 성공 / 평균 오차" + (", 기준 → 새 정책)" if base else ")"), "",
+               "| 명령 (vx, vy, wz) | 성공 | 넘어지지 않음 | 속도 오차 [m/s] | 회전 오차 [rad/s] |", "|---|---|---|---|---|"]
+        for name, cmd in COMMAND_TEST:
+            c, bc = new["commands"][name], (base or {}).get("commands", {}).get(name)
+            md.append(f"| {COMMAND_LABELS[name]} {cmd} | " + " | ".join(
+                _cell(bc[k] if bc else None, c[k], fmt) for k, fmt in (("ok", "{}"), ("survived", "{}"),
+                                                                     ("err_lin", "{:.3f}"), ("err_yaw", "{:.2f}"))) + " |")
     md += ["", "![연속 사진](filmstrip.png)", "", "![걸음 그래프](gait.png)"]
     if new["torque"]:
         md += ["", "![토크-속도](torque_speed.png)"]
@@ -347,6 +407,7 @@ def main():
     parser.add_argument("--kinds", nargs="+", default=list(KINDS), choices=KINDS)
     parser.add_argument("--seed", type=int, default=0, help="지형 시드 (같으면 같은 지형)")
     parser.add_argument("--quick", action="store_true", help="빠르게: 3번씩, 험한 정도 1.5, 마찰 1.0만")
+    parser.add_argument("--commands", action="store_true", help="명령 시험도 (명령 따라 걷기 정책이면 저절로)")
     parser.add_argument("--no-video", action="store_true", help="연속 사진·영상 없이 (화면 렌더링이 없는 환경·테스트용)")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -367,6 +428,8 @@ def main():
         baseline = None
     print(f"평가: {params}\n기준: {baseline or '없음'}\n결과: {out}", flush=True)
 
+    if spec.command_obs:   # 명령 따라 걷기 정책이면 기준 정책도 같은 명령 시험으로
+        args.commands = True
     new = evaluate(policy, config, args, out, label="새 정책")
     base, base_config = None, None
     if baseline is not None:
@@ -378,13 +441,29 @@ def main():
     score = walking_score(new, target)
     lines = [f"**보행 점수 {score['score']:.1f}** (울퉁불퉁한 지형 {new['trials_rough']}번 중 10초 버팀 비율) — "
              + ("합격" if score["passed"] else "불합격: " + ", ".join(score["problems"]))]
+    if spec.command_obs:   # 명령 따라 걷기: 챔피언은 명령 점수로 겨룸. 단 보행 점수가 실물 관측 챔피언보다 우연 이상 낮으면 불합격
+        n_ok = sum(c["ok"] for c in new["commands"].values())
+        n_all = sum(c["trials"] for c in new["commands"].values())
+        walk = score["score"]
+        dep_file = CHAMPION_DIR / f"champion_{spec.name}_deployable.json"
+        if dep_file.exists():
+            dep = json.loads(dep_file.read_text())
+            n = score["trials_rough"]
+            a, b = dep["score"] * n / 100, walk * n / 100
+            if b < a and _pm(b - a, n, (a + b) / (2 * n)):
+                score["passed"] = False
+                score["problems"].append(f"보행 점수가 실물 관측 챔피언({dep['score']:.1f})보다 우연 이상 낮음")
+        score = {**score, "score": 100.0 * n_ok / n_all, "score_trials": n_all, "walk_score": walk}
+        lines.insert(0, f"**명령 점수 {score['score']:.1f}** (명령 {len(COMMAND_TEST)}가지 × 3번 = {n_all}번 중, 10초 버티며 "
+                        f"속도 ±{COMMAND_TOL['lin']} m/s·회전 ±{COMMAND_TOL['yaw']} rad/s 안) — "
+                        + ("합격" if score["passed"] else "불합격: " + ", ".join(score["problems"])))
     if base is not None:
         bs = walking_score(base, target)
         lines.append(f"기준 정책 보행 점수 {bs['score']:.1f}" + ("" if bs["passed"] else " (불합격: " + ", ".join(bs["problems"]) + ")"))
     is_default = all(getattr(args, k) == v for k, v in DEFAULTS.items())
     if is_default:
         # 실물 관측 정책(deployable_obs)은 따로 겨룸: 시뮬레이션에만 있는 센서 값을 쓰는 정책과는 비교 대상이 다름 (docs/10 §7)
-        category = spec.name + ("_deployable" if spec.deployable_obs else "")
+        category = spec.name + ("_deployable" if spec.deployable_obs else "") + ("_cmd" if spec.command_obs else "")
         champion_file = CHAMPION_DIR / f"champion_{category}.json"
         champ = json.loads(champion_file.read_text()) if champion_file.exists() else None
         champion_push = None   # 챔피언 파일에 없는 견고함 시험(밀기·모델 오차) 결과를 채움
@@ -407,7 +486,7 @@ def main():
                       "robust_trials": (len(push) + len(model)) * args.episodes}
             champion_push = {k: bs[k] for k in ("push_ok", "push_trials", "robust_ok", "robust_trials")}
         updated, old, why = update_champion(category, params, run_dir.name, step, score, champion_push)
-        kind = "실물 관측 챔피언" if spec.deployable_obs else "챔피언"
+        kind = "명령 챔피언" if spec.command_obs else "실물 관측 챔피언" if spec.deployable_obs else "챔피언"
         lines.append((f"🏆 **{kind} 갱신** — {why}" + (f" (이전: {old['run']} {old['score']:.1f})" if old else ""))
                      if updated else f"{kind} 유지: {old['run']} {old['score']:.1f} ({why})" if old else f"{kind} 없음 ({why})")
         if base is not None and spec.deployable_obs and not get_spec(base_config).deployable_obs:

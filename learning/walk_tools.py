@@ -47,6 +47,8 @@ def get_spec(config: dict) -> walk_mjx.WalkSpec:
         spec = dataclasses.replace(spec, gait_period=config["gait_period"])
     if config.get("deployable_obs"):                                             # --deployable-obs
         spec = dataclasses.replace(spec, deployable_obs=True)
+    if config.get("command_obs"):                                                # --cmd-* (명령 따라 걷기)
+        spec = dataclasses.replace(spec, command_obs=True)
     if config.get("obs_history"):                                                # --obs-history
         spec = dataclasses.replace(spec, obs_history=int(config["obs_history"]))
     return spec
@@ -123,6 +125,8 @@ class MujocoRunner:
         self.model, self.info = walk_mjx.build_mjx_model(self.spec, terrain)
         self.data = mujoco.MjData(self.model)
         self.target_speed = self.spec.target_speed if target_speed is None else target_speed
+        # 명령 따라 걷기 (spec.command_obs): (앞뒤 vx, 옆 vy [m/s], 회전 wz [rad/s]). 실행 중에 바꿔도 됨 (방향키 조종, 명령 시험)
+        self.command = np.array([self.target_speed, 0.0, 0.0])
         self.n_substeps = round(walk_mjx.CONTROL_DT / walk_mjx.PHYSICS_DT)
         self.on_substep = None   # 물리 스텝 직전(토크를 정한 뒤)마다 부를 함수 f(data) (feasibility.py가 토크 최댓값을 놓치지 않게)
         self.motor_scale = 1.0   # 모터 세기 배율 (모델 오차 시험, walk_mjx.DOMAIN_RAND와 같은 방식)
@@ -182,7 +186,8 @@ class MujocoRunner:
             vel, height = np.zeros(3), 0.0
         return np.concatenate([self.imu_rot @ (rot.T @ [0, 0, -1.0]), self.imu_rot @ d.qvel[3:6], vel, [height],
                                d.qpos[i["qpos_idx"]] - i["q_home"] - self.joint_offset, 0.1 * d.qvel[i["qvel_idx"]],
-                               self.last_action, [self.target_speed], [np.sin(phase), np.cos(phase)]]
+                               self.last_action, self.command if self.spec.command_obs else [self.target_speed],
+                               [np.sin(phase), np.cos(phase)]]
                               ).astype(np.float32)
 
 
@@ -223,8 +228,8 @@ def make_runner(config: dict, backend: str = "mujoco", terrain=None) -> MujocoRu
 
 
 # ---------------------------------------------------------------------------- 한 에피소드 기록
-def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
-    """최대 10초 걷고, 제어 스텝(0.02 s)마다 상태를 기록해 돌려준다. 넘어지면 거기서 끝.
+def run_episode(runner, policy, viewer=None, on_step=None, seconds: float = EPISODE_SECONDS) -> dict:
+    """최대 seconds초(기본 10초) 걷고, 제어 스텝(0.02 s)마다 상태를 기록해 돌려준다. 넘어지면 거기서 끝.
 
     policy  : 관측 → 행동 함수. None이면 행동 0 (= PD로 home 자세 유지. 첫 정책을 기다릴 때)
     viewer  : 주면 매 스텝 화면을 갱신하고 실제 시간 속도로 진행 (창을 닫으면 끝)
@@ -242,7 +247,7 @@ def run_episode(runner, policy, viewer=None, on_step=None) -> dict:
     x0 = d.xpos[info["base_body"], 0]
     rec = {k: [] for k in ("t", "q", "tau", "foot", "foot_rel_z", "base", "rpy", "legs", "toe", "heel")}
     fell = False
-    for k in range(round(EPISODE_SECONDS / W.CONTROL_DT)):
+    for k in range(round(seconds / W.CONTROL_DT)):
         t0 = time.perf_counter()
         obs = runner.step(policy(obs) if policy is not None else zero)
         rot = d.xmat[info["base_body"]].reshape(3, 3)

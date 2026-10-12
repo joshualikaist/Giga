@@ -72,6 +72,7 @@ REWARD_WEIGHTS = {
     "servo_overload": 0.0,      # Σ(관절마다 데이터시트 토크-속도 한계를 넘은 만큼)² [N·m²], 물리 스텝 평균. 넘지 않으면 0.
                                 #   모터 토크 = 명령 − 관절 damping × 속도, 한계 = 정지 토크 − (정지/무부하)·부호(τ)·ω (docs/09 §8.7).
                                 #   기본 0 = 꺼짐. 실물 서보(STS3215 7.4 V)가 못 내는 토크를 쓰지 않게 (docs/10 2차)
+    "yaw_tracking": 0.0,        # exp(−(회전 속도 − 회전 명령)² / 0.1): 명령 모드에서 돌기를 따라가기 (기본 0 = 꺼짐, docs/09 §10)
     "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
                                 #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
 }
@@ -101,7 +102,10 @@ COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
 GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry", "com_shift",
-                "landing", "clearance", "servo_over")
+                "landing", "clearance", "servo_over", "track_lin", "track_yaw")
+# 명령 따라 걷기 (--cmd-*): 명령 = (앞뒤 속도 vx, 옆 속도 vy [m/s], 회전 속도 wz [rad/s]), 몸통이 향한 방향 기준.
+# 학습 때는 환경마다 이 범위에서 뽑고, resample초마다 새로 뽑음 (걷는 중에 명령이 바뀌는 것도 연습)
+COMMANDS_DEFAULT = {"vx": (0.05, 0.25), "vy": (0.0, 0.0), "wz": (0.0, 0.0), "resample": 5.0}
 
 
 @dataclass(frozen=True)
@@ -131,14 +135,16 @@ class WalkSpec:
     deployable_obs: bool = False
     # 관측 기록: 지금 관측 뒤에 지난 몇 제어 스텝의 관측을 이어 붙임 (지난 움직임에서 무게·모터·지연 같은 실물 차이를 짐작하게)
     obs_history: int = 0
+    # 명령 따라 걷기: 관측의 '목표 속도' 1칸 대신 명령 3칸 (vx, vy, wz)
+    command_obs: bool = False
 
     @property
     def n(self) -> int:
         return len(self.policy_joints)
 
     @property
-    def base_obs_size(self) -> int:   # 한 스텝의 관측 크기
-        return 13 + 3 * self.n
+    def base_obs_size(self) -> int:   # 한 스텝의 관측 크기 (명령 모드면 명령 3칸이라 2칸 더)
+        return 13 + 3 * self.n + (2 if self.command_obs else 0)
 
     @property
     def obs_size(self) -> int:        # 정책이 받는 관측 크기 = 지금 + 지난 obs_history 스텝
@@ -303,7 +309,8 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
 class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
                  reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None, push=None,
-                 obs_noise: bool = False, privileged_critic: bool = False, domain_rand: bool = False):
+                 obs_noise: bool = False, privileged_critic: bool = False, domain_rand: bool = False,
+                 commands: dict | None = None):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
         reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
         terrain: 울퉁불퉁한 지형 (biped_sim.terrain.Terrain). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다.
@@ -314,7 +321,9 @@ class BipedWalkMjxEnv(Env):
         obs_noise: 관측에 센서 잡음 (OBS_NOISE: 중력 방향 0.02, 각속도 0.05 rad/s, 관절 각도 0.01 rad, 관절 속도 0.5 rad/s)
         privileged_critic: 비대칭 actor-critic. 관측을 {"state": 정책이 보는 것(실물 관측·잡음), "privileged_state": 가리지 않은
             전체 값(잡음 없음)}로 줌 → 학습 중 점수만 매기는 critic(가치 함수)은 시뮬레이션의 모든 정보를 씀 (실물에 올리는 것은 정책뿐)
-        domain_rand: 환경마다 몸통 질량·모터 세기·무게중심·제어 지연을 DOMAIN_RAND 범위에서 무작위로 (실물과의 차이 대비)"""
+        domain_rand: 환경마다 몸통 질량·모터 세기·무게중심·제어 지연을 DOMAIN_RAND 범위에서 무작위로 (실물과의 차이 대비)
+        commands: 명령 따라 걷기의 명령 범위 {"vx": (최소, 최대), "vy": ..., "wz": ..., "resample": 초} (spec.command_obs 필요).
+            None이면 명령 = (target_speed, 0, 0) 고정"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
         sp = self.spec
         unknown = set(reward_weights or {}) - set(sp.reward_weights)
@@ -324,11 +333,14 @@ class BipedWalkMjxEnv(Env):
         self.terrain, self.spawn_area, self.friction_range, self.push = terrain, spawn_area, friction_range, push
         self.privileged_critic = privileged_critic
         self.domain_rand = domain_rand
+        if commands and not sp.command_obs:
+            raise ValueError("명령 범위(commands)는 command_obs인 과제에서만 씁니다")
+        self.commands = {**COMMANDS_DEFAULT, **commands} if commands else None
         n = sp.n
         self.noise_scale = None if not obs_noise else jnp.asarray(np.concatenate([   # 한 스텝 관측(base_obs_size)에
             [OBS_NOISE["gravity"]] * 3, [OBS_NOISE["gyro"]] * 3, [0.0] * 4,          # 중력, 각속도, (속도·높이)
             [OBS_NOISE["joint_pos"]] * n, [0.1 * OBS_NOISE["joint_vel"]] * n,     # 관절 각도, 관절 속도 × 0.1
-            [0.0] * (n + 3)]), dtype=jnp.float32)                                  # 직전 행동, 목표 속도, 박자
+            [0.0] * (sp.base_obs_size - 10 - 2 * n)]), dtype=jnp.float32)          # 직전 행동, 목표 속도(명령), 박자
         self.mj_model, info = build_mjx_model(sp, terrain)
         self.mx = mjx.put_model(self.mj_model)
         self.target_speed = sp.target_speed if target_speed is None else target_speed
@@ -408,6 +420,10 @@ class BipedWalkMjxEnv(Env):
         }
         if self.friction_range is not None:
             info["friction"] = jax.random.uniform(k3, (), minval=self.friction_range[0], maxval=self.friction_range[1])
+        if self.spec.command_obs:   # 명령과, 회전 명령을 쌓은 '가야 할 방향' (heading 보상의 기준)
+            info["command"] = (self._sample_command(jax.random.fold_in(k3, 13)) if self.commands
+                               else jnp.array([self.target_speed, 0.0, 0.0]))
+            info["heading_target"] = jnp.zeros(())
         if self.domain_rand:   # 이 환경의 '실물 오차' (자동 리셋은 첫 리셋 상태로 되돌리므로 환경마다 학습 내내 같은 값)
             km, ks, kc, kd = jax.random.split(jax.random.fold_in(k3, 7), 4)
             r = DOMAIN_RAND
@@ -513,6 +529,36 @@ class BipedWalkMjxEnv(Env):
 
         com_shift = self._com_shift(data, yaw, contact)
 
+        # --- 명령 따라 걷기: 몸통 방향 기준 속도로 명령과 비교 (명령 모드가 아니면 아래 terms의 원래 식 그대로)
+        heading_err = yaw
+        cmd_terms = {}
+        if sp.command_obs:
+            c = state.info["command"]
+            cy, sy = jnp.cos(yaw), jnp.sin(yaw)
+            v_head = jnp.array([cy * vel_world[0] + sy * vel_world[1], -sy * vel_world[0] + cy * vel_world[1]])
+            lin_err2 = jnp.sum(jnp.square(v_head - c[:2]))
+            yaw_err = ang_body[2] - c[2]
+            info["heading_target"] = state.info["heading_target"] + c[2] * CONTROL_DT   # 회전 명령을 쌓은 방향
+            d = yaw - state.info["heading_target"]
+            heading_err = jnp.arctan2(jnp.sin(d), jnp.cos(d))
+            speed = jnp.linalg.norm(c[:2])   # 보폭: 명령한 방향으로 반대 발보다 얼마나 나갔나 (뒤로·옆으로도)
+            direction = c[:2] / jnp.maximum(speed, 1e-6)
+            d_world = jnp.array([cy * direction[0] - sy * direction[1], sy * direction[0] + cy * direction[1]])
+            feet_xy = data.xpos[self.foot_bodies, :2]
+            target = jnp.maximum(speed * sp.gait_period / 2, 0.02)
+            ahead_cmd = (feet_xy - feet_xy[::-1]) @ d_world
+            cmd_terms = {
+                "forward_velocity": jnp.exp(-lin_err2 / sp.velocity_sigma2),
+                "lateral_velocity": jnp.square(v_head[1] - c[1]),
+                "yaw_rate": jnp.square(yaw_err),
+                "yaw_tracking": jnp.exp(-jnp.square(yaw_err) / 0.1),
+                "step_length": (speed > 0.03) * jnp.sum(real_step * jnp.clip(ahead_cmd, -0.2, target) / target),
+                "symmetry": asym * jnp.maximum(0.0, 1.0 - jnp.abs(c[2]) / 0.3),   # 돌 때는 좌우가 다른 게 당연
+            }
+            track_lin, track_yaw = jnp.sqrt(lin_err2), jnp.abs(yaw_err)
+        else:
+            track_lin, track_yaw = jnp.abs(vel_world[0] - self.target_speed), jnp.abs(ang_body[2])
+
         terms = {
             "forward_velocity": jnp.exp(-jnp.square(vel_world[0] - self.target_speed) / sp.velocity_sigma2),
             "lateral_velocity": jnp.square(vel_world[1]),
@@ -532,12 +578,21 @@ class BipedWalkMjxEnv(Env):
             "reference": self._reference_match(q, info["time"]),
             "com_over_stance": jnp.clip(com_shift / COM_SHIFT_TARGET, 0.0, 1.0),
             "foot_clearance": clearance_reward,
+            "yaw_tracking": jnp.zeros(()),
         }
+        terms.update(cmd_terms)
+        terms["heading"] = jnp.square(heading_err)
         weighted = {k: self.reward_weights[k] * v for k, v in terms.items()}
         reward = sum(weighted.values()) * CONTROL_DT          # 스텝 길이로 나눠 에피소드 합이 '초당' 의미가 되게
         done = jnp.where((tilt > FALL_TILT) | (height < sp.fall_height), 1.0, 0.0)
 
         info["last_action"] = action
+        if self.commands is not None:   # resample초마다 새 명령 (정책은 다음 스텝부터 새 명령을 봄)
+            rng, key = jax.random.split(info["rng"])
+            info["rng"] = rng
+            t, period = state.info["time"], self.commands["resample"]
+            new = jnp.floor((t + CONTROL_DT) / period) > jnp.floor(t / period)
+            info["command"] = jnp.where(new, self._sample_command(key), state.info["command"])
         if self.domain_rand:
             info["act_hist"] = jnp.concatenate([action[None], state.info["act_hist"][:-1]])
         # Brax 래퍼가 넣어 둔 항목(예: 'reward')을 지우지 않도록, 들어온 metrics를 복사해서 값만 갱신
@@ -555,6 +610,8 @@ class BipedWalkMjxEnv(Env):
             "gait/landing": jnp.sum(real_step).astype(jnp.float32),  # 이번 스텝에 걸음으로 착지한 발 수
             "gait/clearance": jnp.sum(real_step * peak),             # 그 착지들의 흔듦 최고 높이 합 [m]
             "gait/servo_over": over_frac,                            # 정책 관절이 데이터시트 한계 밖인 비율 (물리 스텝 평균)
+            "gait/track_lin": track_lin,                             # 속도 명령과의 차이 [m/s]
+            "gait/track_yaw": track_yaw,                             # 회전 명령과의 차이 [rad/s]
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)
@@ -571,6 +628,12 @@ class BipedWalkMjxEnv(Env):
                                                                       ang_body=ang_body, full=True)}
         return state.replace(pipeline_state=data, obs=obs, reward=reward, done=done,
                              metrics=metrics, info=info)
+
+    def _sample_command(self, key):
+        """명령 범위에서 (vx, vy, wz)를 고르게 뽑음."""
+        lo = jnp.array([self.commands[k][0] for k in ("vx", "vy", "wz")])
+        hi = jnp.array([self.commands[k][1] for k in ("vx", "vy", "wz")])
+        return jax.random.uniform(key, (3,), minval=lo, maxval=hi)
 
     def _servo_overload(self, taus, dqs):
         """제어 스텝 동안(물리 스텝 n개) 모터 토크가 서보 데이터시트 한계를 넘은 정도.
@@ -665,6 +728,6 @@ class BipedWalkMjxEnv(Env):
             q_rel,
             0.1 * data.qvel[self.qvel_idx],
             info["last_action"],
-            jnp.array([self.target_speed]),
+            info["command"] if self.spec.command_obs else jnp.array([self.target_speed]),
             jnp.array([jnp.sin(phase), jnp.cos(phase)]),
         ])
