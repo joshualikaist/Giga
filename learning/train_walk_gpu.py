@@ -179,6 +179,8 @@ def main():
     parser.add_argument("--cmd-vy", type=float, nargs=2, default=None, metavar=("최소", "최대"), help="옆 속도 명령 범위 [m/s]")
     parser.add_argument("--cmd-wz", type=float, nargs=2, default=None, metavar=("최소", "최대"), help="회전 속도 명령 범위 [rad/s]")
     parser.add_argument("--cmd-resample", type=float, default=5.0, metavar="S", help="학습 중 명령을 바꾸는 간격 [s]")
+    parser.add_argument("--cmd-zero-prob", type=float, default=0.0, metavar="P",
+                        help="명령 성분마다 이 확률로 정확히 0 (제자리 돌기·옆으로만·뒤로만 같은 명령을 자주 연습)")
     parser.add_argument("--obs-history", type=int, default=0, metavar="H",
                         help="정책 관측에 지난 H 제어 스텝의 관측을 이어 붙임 (지난 움직임에서 실물 차이를 짐작). "
                              "기록 없이 학습한 정책에서 이어 가면 새 입력의 가중치를 0으로 시작 (처음엔 같은 행동)")
@@ -231,7 +233,7 @@ def main():
         import dataclasses
         spec = dataclasses.replace(spec, command_obs=True)
         commands = {"vx": tuple(args.cmd_vx or walk_mjx.COMMANDS_DEFAULT["vx"]), "vy": tuple(args.cmd_vy or (0.0, 0.0)),
-                    "wz": tuple(args.cmd_wz or (0.0, 0.0)), "resample": args.cmd_resample}
+                    "wz": tuple(args.cmd_wz or (0.0, 0.0)), "resample": args.cmd_resample, "zero_prob": args.cmd_zero_prob}
     if not spec.robot.urdf.exists():
         raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
     speed = spec.target_speed if args.speed is None else args.speed

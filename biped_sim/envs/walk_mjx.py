@@ -105,7 +105,8 @@ GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg
                 "landing", "clearance", "servo_over", "track_lin", "track_yaw")
 # 명령 따라 걷기 (--cmd-*): 명령 = (앞뒤 속도 vx, 옆 속도 vy [m/s], 회전 속도 wz [rad/s]), 몸통이 향한 방향 기준.
 # 학습 때는 환경마다 이 범위에서 뽑고, resample초마다 새로 뽑음 (걷는 중에 명령이 바뀌는 것도 연습)
-COMMANDS_DEFAULT = {"vx": (0.05, 0.25), "vy": (0.0, 0.0), "wz": (0.0, 0.0), "resample": 5.0}
+# zero_prob: 성분마다 이 확률로 정확히 0 (범위가 0을 포함할 때만) → '제자리 돌기', '옆으로만', '뒤로만' 같은 명령이 자주 나옴
+COMMANDS_DEFAULT = {"vx": (0.05, 0.25), "vy": (0.0, 0.0), "wz": (0.0, 0.0), "resample": 5.0, "zero_prob": 0.0}
 
 
 @dataclass(frozen=True)
@@ -634,10 +635,13 @@ class BipedWalkMjxEnv(Env):
                              metrics=metrics, info=info)
 
     def _sample_command(self, key):
-        """명령 범위에서 (vx, vy, wz)를 고르게 뽑음."""
+        """명령 범위에서 (vx, vy, wz)를 고르게 뽑음. 성분마다 zero_prob 확률로 0 (범위가 0을 포함하면)."""
         lo = jnp.array([self.commands[k][0] for k in ("vx", "vy", "wz")])
         hi = jnp.array([self.commands[k][1] for k in ("vx", "vy", "wz")])
-        return jax.random.uniform(key, (3,), minval=lo, maxval=hi)
+        k1, k2 = jax.random.split(key)
+        cmd = jax.random.uniform(k1, (3,), minval=lo, maxval=hi)
+        zero = (jax.random.uniform(k2, (3,)) < self.commands["zero_prob"]) & (lo <= 0) & (hi >= 0)
+        return jnp.where(zero, 0.0, cmd)
 
     def _servo_overload(self, taus, dqs):
         """제어 스텝 동안(물리 스텝 n개) 모터 토크가 서보 데이터시트 한계를 넘은 정도.

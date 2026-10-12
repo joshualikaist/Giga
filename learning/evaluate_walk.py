@@ -486,6 +486,8 @@ def main():
                       "robust_trials": (len(push) + len(model)) * args.episodes}
             champion_push = {k: bs[k] for k in ("push_ok", "push_trials", "robust_ok", "robust_trials")}
         updated, old, why = update_champion(category, params, run_dir.name, step, score, champion_push)
+        if spec.command_obs:   # 명령 챔피언의 '점수'는 명령 점수
+            why = why.replace("보행 점수", "명령 점수")
         kind = "명령 챔피언" if spec.command_obs else "실물 관측 챔피언" if spec.deployable_obs else "챔피언"
         lines.append((f"🏆 **{kind} 갱신** — {why}" + (f" (이전: {old['run']} {old['score']:.1f})" if old else ""))
                      if updated else f"{kind} 유지: {old['run']} {old['score']:.1f} ({why})" if old else f"{kind} 없음 ({why})")
