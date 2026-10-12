@@ -581,7 +581,9 @@ class BipedWalkMjxEnv(Env):
             "yaw_tracking": jnp.zeros(()),
         }
         terms.update(cmd_terms)
-        terms["heading"] = jnp.square(heading_err)
+        # 방향: 명령 모드에서는 1 − cos(오차) (최대 2). 제곱이면 돌기 명령을 못 따라갈 때 오차가 180°까지 쌓여 다른 보상을
+        # 모두 덮음 (실측: 에피소드당 −36점, 4차 C2 첫 시도가 이것 때문에 배우지 못함)
+        terms["heading"] = (1.0 - jnp.cos(heading_err)) if sp.command_obs else jnp.square(heading_err)
         weighted = {k: self.reward_weights[k] * v for k, v in terms.items()}
         reward = sum(weighted.values()) * CONTROL_DT          # 스텝 길이로 나눠 에피소드 합이 '초당' 의미가 되게
         done = jnp.where((tilt > FALL_TILT) | (height < sp.fall_height), 1.0, 0.0)
@@ -593,6 +595,8 @@ class BipedWalkMjxEnv(Env):
             t, period = state.info["time"], self.commands["resample"]
             new = jnp.floor((t + CONTROL_DT) / period) > jnp.floor(t / period)
             info["command"] = jnp.where(new, self._sample_command(key), state.info["command"])
+            if sp.command_obs:   # 새 명령이면 '가야 할 방향'도 지금 방향에서 다시 시작
+                info["heading_target"] = jnp.where(new, yaw, info["heading_target"])
         if self.domain_rand:
             info["act_hist"] = jnp.concatenate([action[None], state.info["act_hist"][:-1]])
         # Brax 래퍼가 넣어 둔 항목(예: 'reward')을 지우지 않도록, 들어온 metrics를 복사해서 값만 갱신
