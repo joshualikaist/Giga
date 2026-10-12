@@ -118,14 +118,20 @@ class WalkSpec:
     clearance_target: float = 0.05                        # [m] foot_clearance 보상 만점 발 높이 (발 기준점 높이)
     # 실물에서 잴 수 있는 관측만: 몸통 속도(3)·땅 위 높이(1)는 시뮬레이션에서만 아는 값이라 0으로 가림 (오리는 IMU·서보 각도뿐)
     deployable_obs: bool = False
+    # 관측 기록: 지금 관측 뒤에 지난 몇 제어 스텝의 관측을 이어 붙임 (지난 움직임에서 무게·모터·지연 같은 실물 차이를 짐작하게)
+    obs_history: int = 0
 
     @property
     def n(self) -> int:
         return len(self.policy_joints)
 
     @property
-    def obs_size(self) -> int:
+    def base_obs_size(self) -> int:   # 한 스텝의 관측 크기
         return 13 + 3 * self.n
+
+    @property
+    def obs_size(self) -> int:        # 정책이 받는 관측 크기 = 지금 + 지난 obs_history 스텝
+        return self.base_obs_size * (1 + self.obs_history)
 
     @property
     def velocity_sigma2(self) -> float:   # 속도 보상의 폭: 목표 속도에 비례 (0.3 m/s에서 0.05)
@@ -308,7 +314,7 @@ class BipedWalkMjxEnv(Env):
         self.privileged_critic = privileged_critic
         self.domain_rand = domain_rand
         n = sp.n
-        self.noise_scale = None if not obs_noise else jnp.asarray(np.concatenate([
+        self.noise_scale = None if not obs_noise else jnp.asarray(np.concatenate([   # 한 스텝 관측(base_obs_size)에
             [OBS_NOISE["gravity"]] * 3, [OBS_NOISE["gyro"]] * 3, [0.0] * 4,          # 중력, 각속도, (속도·높이)
             [OBS_NOISE["joint_pos"]] * n, [0.1 * OBS_NOISE["joint_vel"]] * n,     # 관절 각도, 관절 속도 × 0.1
             [0.0] * (n + 3)]), dtype=jnp.float32)                                  # 직전 행동, 목표 속도, 박자
@@ -358,8 +364,8 @@ class BipedWalkMjxEnv(Env):
     # ------------------------------------------------------------------ Brax Env API
     @property
     def observation_size(self):
-        if self.privileged_critic:
-            return {"state": (self.spec.obs_size,), "privileged_state": (self.spec.obs_size,)}
+        if self.privileged_critic:   # critic은 지금 스텝의 전체 관측만 (기록 없이)
+            return {"state": (self.spec.obs_size,), "privileged_state": (self.spec.base_obs_size,)}
         return self.spec.obs_size
 
     @property
@@ -403,6 +409,9 @@ class BipedWalkMjxEnv(Env):
         metrics.update({f"gait/{k}": jnp.zeros(()) for k in GAIT_METRICS})
         metrics.update({"forward_speed": jnp.zeros(())})
         obs = self._observation(data, info)
+        if self.spec.obs_history:   # 처음엔 지난 기록 = 지금 관측
+            info["obs_hist"] = jnp.tile(obs, (self.spec.obs_history, 1))
+            obs = jnp.concatenate([obs, info["obs_hist"].ravel()])
         if self.privileged_critic:
             obs = {"state": obs, "privileged_state": self._observation(data, info, full=True)}
         return State(pipeline_state=data, obs=obs, reward=jnp.zeros(()), done=jnp.zeros(()),
@@ -536,6 +545,10 @@ class BipedWalkMjxEnv(Env):
             rng, key = jax.random.split(info["rng"])
             info["rng"] = rng
             obs = obs + self.noise_scale * jax.random.normal(key, obs.shape)
+        if self.spec.obs_history:   # 지금 관측 + 지난 기록 (기록은 잡음까지 그대로 = 실물 센서에서 쌓은 것처럼)
+            hist = state.info["obs_hist"]
+            info["obs_hist"] = jnp.concatenate([obs[None], hist[:-1]])
+            obs = jnp.concatenate([obs, hist.ravel()])
         if self.privileged_critic:   # critic용: 가리지 않고 잡음도 없는 전체 관측
             obs = {"state": obs, "privileged_state": self._observation(data, info, vel_body=vel_body,
                                                                       ang_body=ang_body, full=True)}

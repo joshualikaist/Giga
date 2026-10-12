@@ -55,6 +55,22 @@ from biped_sim import paths
 RUNS_DIR = paths.OUTPUT_DIR / "learning"
 
 
+def add_history_inputs(params, base_size: int, history: int, privileged: bool):
+    """기록 없이 학습한 정책 → 관측 기록 history 스텝을 받는 정책. 정책 첫 층 가중치에 새 입력(지난 관측)용 행을 0으로
+    붙이고(처음엔 같은 행동), 관측 통계는 지금 관측의 통계를 지난 관측 칸에도 복사 (같은 종류의 값이라서)."""
+    import jax.numpy as jnp
+    norm, policy, value = params
+    layer = policy["params"]["hidden_0"]
+    kernel = jnp.concatenate([layer["kernel"], jnp.zeros((base_size * history, layer["kernel"].shape[1]))])
+    policy = {"params": {**policy["params"], "hidden_0": {**layer, "kernel": kernel}}}
+    tile = lambda x: jnp.tile(x, 1 + history)   # noqa: E731
+
+    def widen(stats):   # 비대칭 critic이면 정책 쪽("state")만 늘림 (critic은 지금 관측만)
+        return {**stats, "state": tile(stats["state"])} if privileged else tile(stats)
+    norm = norm.replace(mean=widen(norm.mean), std=widen(norm.std), summed_variance=widen(norm.summed_variance))
+    return norm, policy, value
+
+
 def to_privileged_params(params):
     """관측 하나로 학습한 정책 파라미터 → 비대칭 critic 형식 {"state", "privileged_state"}.
     정책·관측 통계는 그대로 'state'에 쓰고, critic용 'privileged_state' 통계도 같은 값에서 시작 (실물 관측 정책도 가린 칸의
@@ -100,6 +116,9 @@ def main():
     parser.add_argument("--privileged-critic", action="store_true",
                         help="비대칭 actor-critic: 정책은 실물 관측만, 학습 중 점수만 매기는 critic은 시뮬레이션의 모든 정보 "
                              "(--deployable-obs와 함께. 실물에 올리는 정책은 그대로)")
+    parser.add_argument("--obs-history", type=int, default=0, metavar="H",
+                        help="정책 관측에 지난 H 제어 스텝의 관측을 이어 붙임 (지난 움직임에서 실물 차이를 짐작). "
+                             "기록 없이 학습한 정책에서 이어 가면 새 입력의 가중치를 0으로 시작 (처음엔 같은 행동)")
     parser.add_argument("--domain-rand", action="store_true",
                         help="실물과의 차이 대비: 환경마다 몸통 질량 ±15 %%, 모터 세기 ±15 %%, 무게중심 ±1 cm, 제어 지연 0/20 ms "
                              "(walk_mjx.DOMAIN_RAND)")
@@ -141,6 +160,9 @@ def main():
     if args.deployable_obs:
         import dataclasses
         spec = dataclasses.replace(spec, deployable_obs=True)
+    if args.obs_history:
+        import dataclasses
+        spec = dataclasses.replace(spec, obs_history=args.obs_history)
     if not spec.robot.urdf.exists():
         raise SystemExit(f"로봇 파일이 없습니다: {spec.robot.urdf} (오리 로봇이면 bash scripts/get_open_duck.sh)")
     speed = spec.target_speed if args.speed is None else args.speed
@@ -173,7 +195,7 @@ def main():
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
         "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee, "push": args.push,
         "deployable_obs": args.deployable_obs, "privileged_critic": args.privileged_critic,
-        "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None,
+        "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None, "obs_history": args.obs_history,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -192,7 +214,8 @@ def main():
           + (f", 밀기 {args.push[1]:g}초마다 최대 {args.push[0]:g} m/s" if args.push else "")
           + (", 실물 관측만(속도·높이 가림)+센서 잡음" if args.deployable_obs else "")
           + (", 비대칭 critic(전체 정보)" if args.privileged_critic else "")
-          + (", 질량·모터·무게중심·지연 무작위" if args.domain_rand else ""))
+          + (", 질량·모터·무게중심·지연 무작위" if args.domain_rand else "")
+          + (f", 관측 기록 {args.obs_history}스텝" if args.obs_history else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -281,6 +304,12 @@ def main():
         if args.privileged_critic and not init_config.get("privileged_critic"):
             restore, restore_value = to_privileged_params(restore), False
             print("이어서 학습: 정책·관측 통계는 그대로, critic은 새로 (비대칭 critic으로 바꿈)")
+        old_h = int(init_config.get("obs_history") or 0)
+        if args.obs_history != old_h:
+            if old_h:
+                raise SystemExit(f"관측 기록 {old_h} → {args.obs_history}로는 이어 갈 수 없습니다 (0에서 늘리는 것만)")
+            restore = add_history_inputs(restore, spec.base_obs_size, args.obs_history, args.privileged_critic)
+            print(f"이어서 학습: 관측 기록 {args.obs_history}스텝 추가 (새 입력 가중치 0 → 처음엔 같은 행동)")
 
     ppo.train(
         environment=env,

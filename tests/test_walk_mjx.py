@@ -235,6 +235,42 @@ def test_domain_randomization_and_delay():
     assert moved_delayed < 0.3 * moved_now
 
 
+def test_obs_history_and_parameter_expansion(tmp_path):
+    """관측 기록(--obs-history): ① 학습 환경은 지금 관측 뒤에 지난 관측을 한 칸씩 밀며 붙이고, 일반 MuJoCo 재생기도 같다.
+    ② 기록 없이 학습한 정책을 기록 받는 정책으로 늘리면(새 입력 가중치 0) 같은 상황에서 같은 행동을 낸다."""
+    import dataclasses
+    import json
+
+    from brax.io import model as brax_model
+    from train_walk_gpu import add_history_inputs
+    from walk_tools import MujocoRunner, load_policy
+
+    spec = dataclasses.replace(walk_mjx.SPECS["simple_biped"], obs_history=3)
+    env = walk_mjx.BipedWalkMjxEnv(spec)
+    base = spec.base_obs_size
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    assert state.obs.shape == (base * 4,) and np.allclose(state.obs[base:2 * base], state.obs[:base])
+    s1 = jax.jit(env.step)(state, jnp.full(spec.n, 0.2))
+    np.testing.assert_allclose(np.asarray(s1.obs[base:2 * base]), np.asarray(state.obs[:base]), atol=1e-6)   # 한 칸 밀림
+    runner = MujocoRunner(spec)   # 일반 MuJoCo 재생기도 같은 방식 (MJX는 리셋 때 관절에 잡음을 넣어 값 자체는 다름)
+    o0 = runner.reset()
+    assert o0.shape == (base * 4,) and np.allclose(o0[base:2 * base], o0[:base])
+    o1 = runner.step(np.full(spec.n, 0.2))
+    np.testing.assert_allclose(o1[base:2 * base], o0[:base], atol=1e-6)
+
+    src = LEARNING_DIR / "pretrained" / "walk_policy.pkl"
+    policy, config = load_policy(src)
+    wide = add_history_inputs(brax_model.load_params(str(src)), base, 3, privileged=False)
+    brax_model.save_params(str(tmp_path / "params.pkl"), wide)
+    (tmp_path / "config.json").write_text(json.dumps({**config, "obs_history": 3}))
+    wide_policy, _ = load_policy(tmp_path / "params.pkl")
+    obs = runner.reset()
+    for _ in range(5):
+        action = wide_policy(obs)
+        np.testing.assert_allclose(action, policy(obs[:base]), atol=1e-5)
+        obs = runner.step(action)
+
+
 def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
     """절뚝임 점수에서 뺀 관절(거의 안 움직임)이 있어도 걸음 그래프·출력이 동작 (2026-10-11 자동 평가가 여기서 멈춘 적 있음)."""
     from analyze_gait import print_report, save_plots

@@ -47,12 +47,14 @@ def get_spec(config: dict) -> walk_mjx.WalkSpec:
         spec = dataclasses.replace(spec, gait_period=config["gait_period"])
     if config.get("deployable_obs"):                                             # --deployable-obs
         spec = dataclasses.replace(spec, deployable_obs=True)
+    if config.get("obs_history"):                                                # --obs-history
+        spec = dataclasses.replace(spec, obs_history=int(config["obs_history"]))
     return spec
 
 
 @functools.lru_cache(maxsize=4)
 def _policy_apply(obs_size: int, action_size: int, policy_hidden: tuple, value_hidden: tuple,
-                  privileged_critic: bool = False):
+                  privileged_critic: bool = False, critic_obs_size: int | None = None):
     """신경망 구조별로 한 번만 컴파일되는 함수 apply(params, obs) → 행동.
     가중치(params)를 인자로 받으므로, 정책을 바꿔 끼워도(학습 화면의 갱신, 체크포인트 비교) 다시 컴파일하지 않는다."""
     import jax
@@ -61,7 +63,7 @@ def _policy_apply(obs_size: int, action_size: int, policy_hidden: tuple, value_h
 
     extra = {}
     if privileged_critic:   # 비대칭 actor-critic으로 학습한 정책: 정책은 "state"만 봄 (critic의 "privileged_state"는 필요 없음)
-        obs_size = {"state": (obs_size,), "privileged_state": (obs_size,)}
+        obs_size = {"state": (obs_size,), "privileged_state": (critic_obs_size or obs_size,)}
         extra = dict(policy_obs_key="state", value_obs_key="privileged_state")
     networks = ppo_networks.make_ppo_networks(
         obs_size, action_size,
@@ -91,7 +93,7 @@ def load_policy(params_path: Path):
         config["saved_step"] = int(params_path.stem.split("_")[-1])
     spec = get_spec(config)
     apply = _policy_apply(spec.obs_size, spec.n, tuple(config["policy_hidden"]), tuple(config["value_hidden"]),
-                          bool(config.get("privileged_critic")))
+                          bool(config.get("privileged_critic")), spec.base_obs_size)
     params = brax_model.load_params(str(params_path))
     return (lambda obs: np.asarray(apply(params, obs))), config
 
@@ -133,7 +135,10 @@ class MujocoRunner:
         self.t = 0.0
         self.last_action = np.zeros(self.spec.n)
         self.pending = [np.zeros(self.spec.n)] * self.delay   # 아직 적용되지 않은 행동들 (지연)
-        return self.obs()
+        base = self._base_obs()
+        self.obs_hist = np.tile(base, (self.spec.obs_history, 1))   # 처음엔 지난 기록 = 지금 관측 (walk_mjx와 같게)
+        self._obs = np.concatenate([base, self.obs_hist.ravel()]).astype(np.float32)
+        return self._obs
 
     def step(self, action) -> np.ndarray:
         d, i = self.data, self.info
@@ -155,9 +160,17 @@ class MujocoRunner:
             mujoco.mj_step(self.model, d)
         self.t += walk_mjx.CONTROL_DT
         self.last_action = action
-        return self.obs()
+        base = self._base_obs()
+        self._obs = np.concatenate([base, self.obs_hist.ravel()]).astype(np.float32)
+        if self.spec.obs_history:
+            self.obs_hist = np.concatenate([base[None], self.obs_hist[:-1]])
+        return self._obs
 
     def obs(self) -> np.ndarray:
+        """지금의 정책 관측 (지금 + 지난 obs_history 스텝). reset·step이 갱신."""
+        return self._obs
+
+    def _base_obs(self) -> np.ndarray:
         d, i = self.data, self.info
         rot = d.xmat[i["base_body"]].reshape(3, 3)
         phase = 2 * np.pi * self.t / self.spec.gait_period

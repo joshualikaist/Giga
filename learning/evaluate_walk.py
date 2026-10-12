@@ -126,8 +126,10 @@ def update_champion(robot: str, params: Path, run: str, step, score: dict,
     champion_push: 이번 평가에서 기준 정책이 챔피언이었다면 그 밀기 시험 결과 (챔피언 파일에 없을 때 보충)"""
     path = CHAMPION_DIR / f"champion_{robot}.json"
     old = json.loads(path.read_text()) if path.exists() else None
-    if old is not None and champion_push is not None:   # 챔피언 파일에 없는 시험 결과는 이번에 잰 기준 정책 값으로 채움
-        old = {**champion_push, **old} if "robust_ok" in old else {**old, **champion_push}
+    if old is not None and champion_push is not None:   # 챔피언 파일에 없는 시험 결과는 이번에 잰 값으로 채움
+        old = {**old, **champion_push}
+        if not beats_champion(score, old)[0]:            # 챔피언이 그대로면 채운 값을 파일에도 남김 (다음 비교용)
+            path.write_text(json.dumps(old, indent=2, ensure_ascii=False))
     better, why = beats_champion(score, old)
     if better:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -377,10 +379,23 @@ def main():
         category = spec.name + ("_deployable" if spec.deployable_obs else "")
         champion_file = CHAMPION_DIR / f"champion_{category}.json"
         champ = json.loads(champion_file.read_text()) if champion_file.exists() else None
-        champion_push = None   # 기준 정책이 바로 챔피언이면 이번에 잰 그 밀기 시험 결과를 챔피언 쪽 값으로 씀
-        if base is not None and champ is not None and baseline is not None \
-                and Path(champ["params"]).resolve() == baseline.resolve():
-            bs = walking_score(base, target)
+        champion_push = None   # 챔피언 파일에 없는 견고함 시험(밀기·모델 오차) 결과를 채움
+        if champ is not None and "robust_ok" not in champ:
+            if base is not None and baseline is not None and Path(champ["params"]).resolve() == baseline.resolve():
+                bs = walking_score(base, target)   # 기준 정책이 바로 챔피언 → 이번에 잰 값
+            else:                                  # 아니면 챔피언을 같은 시험으로 직접 잼 (약 1분)
+                print(f"  챔피언({champ['run']})의 견고함 시험 결과가 없어 재는 중...", flush=True)
+                cp, cc = load_policy(Path(champ["params"]))
+                cc = {**cc, "servo": config.get("servo", "ideal")}
+                measured = {"push": {f"{v:g}": int(sum(push_trials(make_runner(cc), cp, v, PUSH_TEST["interval"],
+                                                                    args.episodes, args.seed)))
+                                     for v in PUSH_TEST["speeds"]},
+                            "model_error": {k: model_error_trials(cc, cp, c, args.episodes, args.seed)
+                                            for k, c in MODEL_ERROR_TEST.items()}}
+                push, model = measured["push"], measured["model_error"]
+                bs = {"push_ok": sum(push.values()), "push_trials": len(push) * args.episodes,
+                      "robust_ok": sum(push.values()) + sum(model.values()),
+                      "robust_trials": (len(push) + len(model)) * args.episodes}
             champion_push = {k: bs[k] for k in ("push_ok", "push_trials", "robust_ok", "robust_trials")}
         updated, old, why = update_champion(category, params, run_dir.name, step, score, champion_push)
         kind = "실물 관측 챔피언" if spec.deployable_obs else "챔피언"
