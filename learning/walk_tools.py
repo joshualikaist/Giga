@@ -123,6 +123,8 @@ class MujocoRunner:
         self.target_speed = self.spec.target_speed if target_speed is None else target_speed
         self.n_substeps = round(walk_mjx.CONTROL_DT / walk_mjx.PHYSICS_DT)
         self.on_substep = None   # 물리 스텝 직전(토크를 정한 뒤)마다 부를 함수 f(data) (feasibility.py가 토크 최댓값을 놓치지 않게)
+        self.motor_scale = 1.0   # 모터 세기 배율 (모델 오차 시험, walk_mjx.DOMAIN_RAND와 같은 방식)
+        self.delay = 0           # 제어 지연 [제어 스텝]: k면 k 스텝 전의 행동이 지금 적용됨 (1 = 20 ms)
 
     def reset(self) -> np.ndarray:
         mujoco.mj_resetData(self.model, self.data)
@@ -130,17 +132,24 @@ class MujocoRunner:
         mujoco.mj_forward(self.model, self.data)
         self.t = 0.0
         self.last_action = np.zeros(self.spec.n)
+        self.pending = [np.zeros(self.spec.n)] * self.delay   # 아직 적용되지 않은 행동들 (지연)
         return self.obs()
 
     def step(self, action) -> np.ndarray:
         d, i = self.data, self.info
         action = np.clip(action, -1, 1)
+        if self.delay:   # 제어 지연: delay 스텝 전에 낸 행동이 지금 적용
+            self.pending.append(action)
+            applied = self.pending.pop(0)
+        else:
+            applied = action
         q_des = i["act_home"].copy()              # 정책 관절은 home + 행동, 나머지(머리 등)는 home
-        q_des[i["policy_act"]] += self.spec.action_scale * action
+        q_des[i["policy_act"]] += self.spec.action_scale * applied
         q_des = np.clip(q_des, i["act_range"][:, 0], i["act_range"][:, 1])
         for _ in range(self.n_substeps):   # 물리 1스텝마다 PD로 토크 계산 (모터 드라이버 역할)
             q, dq = d.qpos[i["act_qpos_idx"]], d.qvel[i["act_qvel_idx"]]
-            d.ctrl[:] = np.clip(i["kp"] * (q_des - q) - i["kd"] * dq, i["tau_limit"][:, 0], i["tau_limit"][:, 1])
+            d.ctrl[:] = self.motor_scale * np.clip(i["kp"] * (q_des - q) - i["kd"] * dq,
+                                                   i["tau_limit"][:, 0], i["tau_limit"][:, 1])
             if self.on_substep:
                 self.on_substep(d)
             mujoco.mj_step(self.model, d)

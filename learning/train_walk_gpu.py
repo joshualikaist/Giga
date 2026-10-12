@@ -100,6 +100,9 @@ def main():
     parser.add_argument("--privileged-critic", action="store_true",
                         help="비대칭 actor-critic: 정책은 실물 관측만, 학습 중 점수만 매기는 critic은 시뮬레이션의 모든 정보 "
                              "(--deployable-obs와 함께. 실물에 올리는 정책은 그대로)")
+    parser.add_argument("--domain-rand", action="store_true",
+                        help="실물과의 차이 대비: 환경마다 몸통 질량 ±15 %%, 모터 세기 ±15 %%, 무게중심 ±1 cm, 제어 지연 0/20 ms "
+                             "(walk_mjx.DOMAIN_RAND)")
     parser.add_argument("--home-knee", type=float, default=None, metavar="RAD",
                         help="서 있는 자세의 무릎 각도 (오리 기본 0.8). 덜 굽히면 한 발 버티는 무릎 토크가 줄어듦 (docs/09 §9.5)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
@@ -170,6 +173,7 @@ def main():
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
         "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee, "push": args.push,
         "deployable_obs": args.deployable_obs, "privileged_critic": args.privileged_critic,
+        "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -187,7 +191,8 @@ def main():
           + (f", 서 있는 자세 무릎 {args.home_knee} rad (기준 높이 {spec.nominal_height:.3f} m)" if args.home_knee else "")
           + (f", 밀기 {args.push[1]:g}초마다 최대 {args.push[0]:g} m/s" if args.push else "")
           + (", 실물 관측만(속도·높이 가림)+센서 잡음" if args.deployable_obs else "")
-          + (", 비대칭 critic(전체 정보)" if args.privileged_critic else ""))
+          + (", 비대칭 critic(전체 정보)" if args.privileged_critic else "")
+          + (", 질량·모터·무게중심·지연 무작위" if args.domain_rand else ""))
     if args.init_from:
         print(f"이어서 학습: {args.init_from} 의 정책에서 시작 (처음 평가 = 그 정책의 실력)")
     print(f"저장: {run_dir}")
@@ -212,7 +217,7 @@ def main():
     env = walk_mjx.BipedWalkMjxEnv(spec, target_speed=speed, reward_weights=overrides, terrain=terrain,
                                    spawn_area=spawn_area, friction_range=args.friction,
                                    push=tuple(args.push) if args.push else None, obs_noise=args.deployable_obs,
-                                   privileged_critic=args.privileged_critic)
+                                   privileged_critic=args.privileged_critic, domain_rand=args.domain_rand)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()

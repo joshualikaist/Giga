@@ -32,6 +32,24 @@ GROUPS = ("hip_roll", "hip_pitch", "knee", "ankle", "hip_yaw")   # 토크 표의
 DEFAULTS = dict(episodes=10, difficulties=[1.5, 2.0], frictions=[1.0, 0.5], kinds=list(KINDS), seed=0)
 CHAMPION_DIR = Path(__file__).resolve().parents[1] / "output" / "learning"
 PUSH_TEST = dict(speeds=(0.3, 0.4), interval=2.0)   # 밀기 시험: 평지에서 2초마다 몸통을 무작위 방향으로 툭 (보행 점수와 별도)
+# 모델 오차 시험: 로봇을 일부러 시뮬레이션과 다르게 해서 섞인 코스(험한 정도 1.5)를 걸림 (실물과의 차이 대비, 보행 점수와 별도)
+MODEL_ERROR_TEST = {
+    "heavy_weak_slow": dict(mass=1.15, motor=0.85, com=(0.01, 0.0), delay=2),    # 몸통 +15 %, 모터 −15 %, 무게중심 앞 1 cm, 40 ms 지연
+    "light_strong": dict(mass=0.85, motor=1.15, com=(-0.01, 0.0), delay=1),      # 몸통 −15 %, 모터 +15 %, 무게중심 뒤 1 cm, 20 ms 지연
+}
+MODEL_ERROR_LABELS = {"heavy_weak_slow": "무겁고·약하고·40 ms", "light_strong": "가볍고·세고·20 ms"}
+
+
+def model_error_trials(config, policy, cond: dict, episodes: int, seed=0) -> int:
+    """cond대로 몸통 질량·관성, 무게중심, 모터 세기, 제어 지연을 바꾼 로봇으로 섞인 코스 1.5를 episodes번. 10초 버틴 횟수."""
+    runner = make_runner(config, terrain=make_terrain("flat"))
+    m, b = runner.model, runner.info["base_body"]
+    m.body_mass[b] *= cond["mass"]
+    m.body_inertia[b] *= cond["mass"]
+    m.body_ipos[b, 0:2] += cond["com"]
+    runner.motor_scale, runner.delay = cond["motor"], cond["delay"]
+    rows = run_trials(runner, policy, ["mixed"], 1.5, episodes, seed + 7, log=None)
+    return int(sum(ok for ok, _, _ in rows["mixed"]))
 
 
 def push_trials(runner, policy, speed, interval, episodes, seed=0) -> list[bool]:
@@ -70,15 +88,19 @@ def walking_score(result: dict, target_speed: float) -> dict:
     torque = None
     if result.get("torque"):
         torque = float(np.mean([v for grp in GROUPS for v in result["torque"]["flat"][grp]["over_datasheet_pct"]]))
-    push = result.get("push") or {}
+    push, model = result.get("push") or {}, result.get("model_error") or {}
     return {"score": 100.0 * sum(rough) / max(result["trials_rough"], 1), "passed": not problems, "problems": problems,
             "datasheet_over_pct": torque, "trials_rough": result["trials_rough"],
-            "push_ok": int(sum(push.values())), "push_trials": len(push) * result["episodes"]}
+            "push_ok": int(sum(push.values())), "push_trials": len(push) * result["episodes"],
+            # 견고함 = 밀기 + 모델 오차 시험 (챔피언 동점 깨기용)
+            "robust_ok": int(sum(push.values()) + sum(model.values())),
+            "robust_trials": (len(push) + len(model)) * result["episodes"]}
 
 
 def beats_champion(new: dict, old: dict | None) -> tuple[bool, str]:
     """챔피언을 바꿀지 (docs/10 §3). new·old = walking_score 결과 (old에 밀기 시험이 없으면 점수만 봄).
-    ① 합격해야 함 ② 보행 점수가 높으면 바꿈 ③ 보행 점수 차이가 우연 범위(2σ) 안이고 밀기 시험이 우연보다 크게 좋으면 바꿈"""
+    ① 합격해야 함 ② 보행 점수가 높으면 바꿈 ③ 보행 점수 차이가 우연 범위(2σ) 안이고
+    견고함 시험(밀기 + 모델 오차, 그것이 없는 예전 결과와는 밀기만)이 우연보다 크게 좋으면 바꿈"""
     if not new["passed"]:
         return False, "불합격"
     if old is None:
@@ -88,11 +110,13 @@ def beats_champion(new: dict, old: dict | None) -> tuple[bool, str]:
     n = new.get("trials_rough") or 160
     a, b = old["score"] * n / 100, new["score"] * n / 100
     score_tie = not _pm(b - a, n, (a + b) / (2 * n))
-    m = new.get("push_trials", 0)
-    if score_tie and m and old.get("push_trials") == m:
-        pa, pb = old["push_ok"], new["push_ok"]
+    key = "robust" if new.get("robust_trials") and old.get("robust_trials") == new["robust_trials"] else "push"
+    m = new.get(f"{key}_trials", 0)
+    if score_tie and m and old.get(f"{key}_trials") == m:
+        pa, pb = old[f"{key}_ok"], new[f"{key}_ok"]
+        name = "밀기·모델 오차 시험" if key == "robust" else "밀기 시험"
         if pb > pa and _pm(pb - pa, m, (pa + pb) / (2 * m)):
-            return True, f"보행 점수는 우연 범위 안에서 같고 밀기 시험이 우연보다 크게 좋음 ({pa} → {pb} / {m})"
+            return True, f"보행 점수는 우연 범위 안에서 같고 {name}이 우연보다 크게 좋음 ({pa} → {pb} / {m})"
     return False, "보행 점수가 낮거나 같음"
 
 
@@ -102,8 +126,8 @@ def update_champion(robot: str, params: Path, run: str, step, score: dict,
     champion_push: 이번 평가에서 기준 정책이 챔피언이었다면 그 밀기 시험 결과 (챔피언 파일에 없을 때 보충)"""
     path = CHAMPION_DIR / f"champion_{robot}.json"
     old = json.loads(path.read_text()) if path.exists() else None
-    if old is not None and champion_push is not None and "push_ok" not in old:
-        old = {**old, **champion_push}
+    if old is not None and champion_push is not None:   # 챔피언 파일에 없는 시험 결과는 이번에 잰 기준 정책 값으로 채움
+        old = {**champion_push, **old} if "robust_ok" in old else {**old, **champion_push}
     better, why = beats_champion(score, old)
     if better:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +157,10 @@ def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> 
                       for v in PUSH_TEST["speeds"]}
     print(f"  [{label}] 밀기 ({PUSH_TEST['interval']:g}초마다): "
           + ", ".join(f"{v} m/s {n}/{args.episodes}" for v, n in result["push"].items()), flush=True)
+    result["model_error"] = {name: model_error_trials(config, policy, cond, args.episodes, args.seed)
+                             for name, cond in MODEL_ERROR_TEST.items()}
+    print(f"  [{label}] 모델 오차 (섞인 코스 1.5): "
+          + ", ".join(f"{MODEL_ERROR_LABELS[k]} {n}/{args.episodes}" for k, n in result["model_error"].items()), flush=True)
     if out is not None and not args.no_video:
         rec, frames = record_with_frames(runner, policy)
     else:
@@ -196,6 +224,10 @@ def verdict(new: dict, base: dict | None, args, target_speed: float) -> list[str
         lines.append(f"밀기 버티기 (평지, {PUSH_TEST['interval']:g}초마다 무작위 방향, {args.episodes}번 중): " + ", ".join(
             f"{v} m/s " + (f"{base['push'][v]} → {n}" if base is not None and base.get("push") else f"{n}")
             for v, n in new["push"].items()))
+    if new.get("model_error"):   # 모델 오차 시험 (보행 점수와 별도)
+        lines.append(f"모델 오차 버티기 (섞인 코스 1.5, {args.episodes}번 중): " + ", ".join(
+            f"{MODEL_ERROR_LABELS[k]} " + (f"{base['model_error'][k]} → {n}" if base is not None and base.get("model_error")
+                                          else f"{n}") for k, n in new["model_error"].items()))
     if base is not None:
         for name, kinds in (("지형 전체(평지 제외)", [k for k in args.kinds if k != "flat"]),
                             ("장애물", [k for k in args.kinds if k == "obstacles"])):
@@ -349,7 +381,7 @@ def main():
         if base is not None and champ is not None and baseline is not None \
                 and Path(champ["params"]).resolve() == baseline.resolve():
             bs = walking_score(base, target)
-            champion_push = {"push_ok": bs["push_ok"], "push_trials": bs["push_trials"]}
+            champion_push = {k: bs[k] for k in ("push_ok", "push_trials", "robust_ok", "robust_trials")}
         updated, old, why = update_champion(category, params, run_dir.name, step, score, champion_push)
         kind = "실물 관측 챔피언" if spec.deployable_obs else "챔피언"
         lines.append((f"🏆 **{kind} 갱신** — {why}" + (f" (이전: {old['run']} {old['score']:.1f})" if old else ""))

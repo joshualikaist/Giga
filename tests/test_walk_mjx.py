@@ -209,6 +209,32 @@ def test_deployable_obs_hides_privileged_values():
     np.testing.assert_allclose(np.asarray(s2.obs["state"]), np.asarray(state.obs), atol=1e-5)   # 정책 관측은 그대로
 
 
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_domain_randomization_and_delay():
+    """실물과의 차이 대비(--domain-rand): 환경마다 질량·모터·무게중심·지연이 범위 안에서 정해지고 서 있다.
+    제어 지연 k 스텝이면 k 스텝 동안은 home 자세 명령 (일반 MuJoCo 재생기도 같은 방식)."""
+    from walk_tools import MujocoRunner
+
+    spec = walk_mjx.SPECS["open_duck_mini"]
+    duck = walk_mjx.BipedWalkMjxEnv(spec, domain_rand=True)
+    state = _stands_with_zero_action(duck)
+    r, i = walk_mjx.DOMAIN_RAND, state.info
+    assert abs(float(i["mass_scale"]) - 1) <= r["mass"] and abs(float(i["motor_scale"]) - 1) <= r["motor"]
+    assert np.abs(np.asarray(i["com_offset"])).max() <= r["com"] and 0 <= int(i["delay"]) <= r["delay"]
+    runner = MujocoRunner(spec)
+    runner.delay = 2
+    runner.reset()
+    q0 = runner.data.qpos[runner.info["qpos_idx"]].copy()
+    runner.step(np.ones(spec.n))       # 지연 2스텝: 아직 home 명령 → 거의 움직이지 않음
+    moved_delayed = np.abs(runner.data.qpos[runner.info["qpos_idx"]] - q0).max()
+    runner.delay = 0
+    runner.reset()
+    runner.step(np.ones(spec.n))
+    moved_now = np.abs(runner.data.qpos[runner.info["qpos_idx"]] - q0).max()
+    assert moved_delayed < 0.3 * moved_now
+
+
 def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
     """절뚝임 점수에서 뺀 관절(거의 안 움직임)이 있어도 걸음 그래프·출력이 동작 (2026-10-11 자동 평가가 여기서 멈춘 적 있음)."""
     from analyze_gait import print_report, save_plots

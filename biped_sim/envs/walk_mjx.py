@@ -75,6 +75,11 @@ REWARD_WEIGHTS = {
     "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
                                 #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
 }
+# 실물과 시뮬레이션의 차이 대비 (--domain-rand): 환경마다 리셋할 때 무작위로 정함 (docs/10 3차)
+DOMAIN_RAND = {"mass": 0.15,        # 몸통 질량 ±15 % (관성도 같은 비율)
+               "motor": 0.15,       # 모터 세기 ±15 % (PD 토크와 토크 한계 모두)
+               "com": 0.01,         # 몸통 무게중심 앞뒤·좌우 ±1 cm
+               "delay": 2}          # 제어 지연 0 ~ 2 제어 스텝 (0 / 20 / 40 ms): 그만큼 전에 낸 행동이 지금 적용
 OBS_NOISE = {"gravity": 0.02, "gyro": 0.05, "joint_pos": 0.01, "joint_vel": 0.5}   # 표준편차 (IMU BNO055, 서보 엔코더·백래시 정도)
 SERVO_DATASHEET = {"stall": 1.91, "noload": 4.4}   # [N·m], [rad/s] STS3215 7.4 V (19.5 kg·cm, 0.238 s/60°) = feasibility.SERVO
 COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§8.6 LIPM 상한, hip_roll 정적 토크가 정격 아래로)
@@ -281,7 +286,7 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
 class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
                  reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None, push=None,
-                 obs_noise: bool = False, privileged_critic: bool = False):
+                 obs_noise: bool = False, privileged_critic: bool = False, domain_rand: bool = False):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
         reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
         terrain: 울퉁불퉁한 지형 (biped_sim.terrain.Terrain). 몸통 높이·발 접촉은 그 자리 땅을 기준으로 잰다.
@@ -291,7 +296,8 @@ class BipedWalkMjxEnv(Env):
         push: (최대 속도 [m/s], 간격 [s]) — 간격마다 몸통을 수평 무작위 방향으로 0~최대 속도만큼 툭 밈 (외란 버티기). None = 없음
         obs_noise: 관측에 센서 잡음 (OBS_NOISE: 중력 방향 0.02, 각속도 0.05 rad/s, 관절 각도 0.01 rad, 관절 속도 0.5 rad/s)
         privileged_critic: 비대칭 actor-critic. 관측을 {"state": 정책이 보는 것(실물 관측·잡음), "privileged_state": 가리지 않은
-            전체 값(잡음 없음)}로 줌 → 학습 중 점수만 매기는 critic(가치 함수)은 시뮬레이션의 모든 정보를 씀 (실물에 올리는 것은 정책뿐)"""
+            전체 값(잡음 없음)}로 줌 → 학습 중 점수만 매기는 critic(가치 함수)은 시뮬레이션의 모든 정보를 씀 (실물에 올리는 것은 정책뿐)
+        domain_rand: 환경마다 몸통 질량·모터 세기·무게중심·제어 지연을 DOMAIN_RAND 범위에서 무작위로 (실물과의 차이 대비)"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
         sp = self.spec
         unknown = set(reward_weights or {}) - set(sp.reward_weights)
@@ -300,6 +306,7 @@ class BipedWalkMjxEnv(Env):
         self.reward_weights = {**sp.reward_weights, **(reward_weights or {})}
         self.terrain, self.spawn_area, self.friction_range, self.push = terrain, spawn_area, friction_range, push
         self.privileged_critic = privileged_critic
+        self.domain_rand = domain_rand
         n = sp.n
         self.noise_scale = None if not obs_noise else jnp.asarray(np.concatenate([
             [OBS_NOISE["gravity"]] * 3, [OBS_NOISE["gyro"]] * 3, [0.0] * 4,          # 중력, 각속도, (속도·높이)
@@ -384,6 +391,14 @@ class BipedWalkMjxEnv(Env):
         }
         if self.friction_range is not None:
             info["friction"] = jax.random.uniform(k3, (), minval=self.friction_range[0], maxval=self.friction_range[1])
+        if self.domain_rand:   # 이 환경의 '실물 오차' (자동 리셋은 첫 리셋 상태로 되돌리므로 환경마다 학습 내내 같은 값)
+            km, ks, kc, kd = jax.random.split(jax.random.fold_in(k3, 7), 4)
+            r = DOMAIN_RAND
+            info["mass_scale"] = jax.random.uniform(km, (), minval=1 - r["mass"], maxval=1 + r["mass"])
+            info["motor_scale"] = jax.random.uniform(ks, (), minval=1 - r["motor"], maxval=1 + r["motor"])
+            info["com_offset"] = jax.random.uniform(kc, (2,), minval=-r["com"], maxval=r["com"])
+            info["delay"] = jax.random.randint(kd, (), 0, r["delay"] + 1)
+            info["act_hist"] = jnp.zeros((r["delay"], n))   # 지난 행동들 [1스텝 전, 2스텝 전, ...]
         metrics = {f"reward/{k}": jnp.zeros(()) for k in self.reward_weights}
         metrics.update({f"gait/{k}": jnp.zeros(()) for k in GAIT_METRICS})
         metrics.update({"forward_speed": jnp.zeros(())})
@@ -396,18 +411,27 @@ class BipedWalkMjxEnv(Env):
     def step(self, state: State, action: jax.Array) -> State:
         sp = self.spec
         action = jnp.clip(action, -1.0, 1.0)
+        applied = action
+        if self.domain_rand:   # 제어 지연: 이 환경의 지연(0~2 스텝)만큼 전에 낸 행동이 지금 적용됨
+            applied = jnp.concatenate([action[None], state.info["act_hist"]])[state.info["delay"]]
         # 정책 관절은 home + 행동, 나머지(머리 등)는 home. 관절 범위 밖은 자름
-        q_des = self.act_home.at[self.policy_act].add(sp.action_scale * action)
+        q_des = self.act_home.at[self.policy_act].add(sp.action_scale * applied)
         q_des = jnp.clip(q_des, self.act_low, self.act_high)
 
         mx = self.mx
         if self.friction_range is not None:   # 접촉 마찰 = 두 geom 중 큰 값 → 충돌하는 geom(발·바닥) 모두 같은 값으로
             mx = mx.replace(geom_friction=mx.geom_friction.at[:, 0].set(state.info["friction"]))
+        motor = 1.0
+        if self.domain_rand:   # 몸통 질량·관성, 무게중심 위치를 이 환경의 값으로
+            b, ms = self.base_body, state.info["mass_scale"]
+            mx = mx.replace(body_mass=mx.body_mass.at[b].multiply(ms), body_inertia=mx.body_inertia.at[b].multiply(ms),
+                            body_ipos=mx.body_ipos.at[b, 0:2].add(state.info["com_offset"]))
+            motor = state.info["motor_scale"]
 
         def substep(data, _):  # 물리 1스텝마다 PD로 토크 계산 (모터 드라이버 역할)
             q = data.qpos[self.act_qpos_idx]
             dq = data.qvel[self.act_qvel_idx]
-            tau = jnp.clip(self.kp * (q_des - q) - self.kd * dq, self.tau_low, self.tau_high)
+            tau = motor * jnp.clip(self.kp * (q_des - q) - self.kd * dq, self.tau_low, self.tau_high)
             data = mjx.step(mx, data.replace(ctrl=tau))
             return data, (tau, dq)
 
@@ -488,6 +512,8 @@ class BipedWalkMjxEnv(Env):
         done = jnp.where((tilt > FALL_TILT) | (height < sp.fall_height), 1.0, 0.0)
 
         info["last_action"] = action
+        if self.domain_rand:
+            info["act_hist"] = jnp.concatenate([action[None], state.info["act_hist"][:-1]])
         # Brax 래퍼가 넣어 둔 항목(예: 'reward')을 지우지 않도록, 들어온 metrics를 복사해서 값만 갱신
         metrics = dict(state.metrics)
         metrics.update({f"reward/{k}": v * CONTROL_DT for k, v in weighted.items()})
