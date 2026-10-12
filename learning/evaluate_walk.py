@@ -78,10 +78,11 @@ def command_trials(config, policy, seed=0) -> dict:
             v, w = command_tracking(rec)
             err_lin, err_yaw = float(np.linalg.norm(v - np.array(cmd[:2]))), abs(w - cmd[2])
             ok = (not rec["fell"]) and err_lin <= COMMAND_TOL["lin"] and err_yaw <= COMMAND_TOL["yaw"]
-            rows.append((ok, not rec["fell"], err_lin, err_yaw))
-        ok, alive, el, ey = zip(*rows)
+            rows.append((ok, not rec["fell"], err_lin, err_yaw, (*v, w)))
+        ok, alive, el, ey, got = zip(*rows)
         out[name] = {"ok": int(sum(ok)), "trials": len(rows), "survived": int(sum(alive)),
-                     "err_lin": float(np.mean(el)), "err_yaw": float(np.mean(ey))}
+                     "err_lin": float(np.mean(el)), "err_yaw": float(np.mean(ey)),
+                     "achieved": [float(x) for x in np.mean(got, axis=0)]}   # 실제 (vx, vy, wz) 평균
     return out
 
 
@@ -382,12 +383,14 @@ def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, ba
         md.append(f"| {name} | " + (f"{fmt.format(gv(bg, f))} | " if base else "") + f"{fmt.format(gv(g, f))} |")
     if new.get("commands"):
         md += ["", "## 4. 명령 따라 걷기 (명령마다 3번: 평지 1 + 섞인 코스 1.0 2, 성공 / 평균 오차" + (", 기준 → 새 정책)" if base else ")"), "",
-               "| 명령 (vx, vy, wz) | 성공 | 넘어지지 않음 | 속도 오차 [m/s] | 회전 오차 [rad/s] |", "|---|---|---|---|---|"]
+               "| 명령 (vx, vy, wz) | 성공 | 넘어지지 않음 | 속도 오차 [m/s] | 회전 오차 [rad/s] | 실제 (vx, vy, wz) |",
+               "|---|---|---|---|---|---|"]
         for name, cmd in COMMAND_TEST:
             c, bc = new["commands"][name], (base or {}).get("commands", {}).get(name)
             md.append(f"| {COMMAND_LABELS[name]} {cmd} | " + " | ".join(
                 _cell(bc[k] if bc else None, c[k], fmt) for k, fmt in (("ok", "{}"), ("survived", "{}"),
-                                                                     ("err_lin", "{:.3f}"), ("err_yaw", "{:.2f}"))) + " |")
+                                                                     ("err_lin", "{:.3f}"), ("err_yaw", "{:.2f}")))
+                      + " | " + ("(" + ", ".join(f"{x:+.2f}" for x in c["achieved"]) + ")" if "achieved" in c else "") + " |")
     md += ["", "![연속 사진](filmstrip.png)", "", "![걸음 그래프](gait.png)"]
     if new["torque"]:
         md += ["", "![토크-속도](torque_speed.png)"]
