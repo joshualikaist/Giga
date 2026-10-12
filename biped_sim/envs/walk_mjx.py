@@ -79,7 +79,18 @@ REWARD_WEIGHTS = {
 DOMAIN_RAND = {"mass": 0.15,        # 몸통 질량 ±15 % (관성도 같은 비율)
                "motor": 0.15,       # 모터 세기 ±15 % (PD 토크와 토크 한계 모두)
                "com": 0.01,         # 몸통 무게중심 앞뒤·좌우 ±1 cm
-               "delay": 2}          # 제어 지연 0 ~ 2 제어 스텝 (0 / 20 / 40 ms): 그만큼 전에 낸 행동이 지금 적용
+               "delay": 2,          # 제어 지연 0 ~ 2 제어 스텝 (0 / 20 / 40 ms): 그만큼 전에 낸 행동이 지금 적용
+               "joint_offset": 0.03,   # 관절마다 서보 영점 오차 ±0.03 rad (≈2°, 서보 혼을 한 톱니 틀리게 끼운 정도): 읽기·명령 모두
+               "imu_tilt": 0.035}      # IMU를 기울게 붙인 오차 (roll·pitch 각각 ±2°): 중력 방향·각속도를 그만큼 돌려서 읽음
+
+
+def tilt_matrix(roll, pitch):
+    """IMU 장착 기울기 (작은 roll·pitch) → 회전 행렬. 읽은 값 = 이 행렬 × 실제 값. jax·numpy 모두 (xp로 고름)."""
+    xp = jnp if isinstance(roll, jax.Array) else np
+    cr, sr, cp, sp = xp.cos(roll), xp.sin(roll), xp.cos(pitch), xp.sin(pitch)
+    rx = xp.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]])
+    ry = xp.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]])
+    return rx @ ry
 OBS_NOISE = {"gravity": 0.02, "gyro": 0.05, "joint_pos": 0.01, "joint_vel": 0.5}   # 표준편차 (IMU BNO055, 서보 엔코더·백래시 정도)
 SERVO_DATASHEET = {"stall": 1.91, "noload": 4.4}   # [N·m], [rad/s] STS3215 7.4 V (19.5 kg·cm, 0.238 s/60°) = feasibility.SERVO
 COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§8.6 LIPM 상한, hip_roll 정적 토크가 정격 아래로)
@@ -405,6 +416,10 @@ class BipedWalkMjxEnv(Env):
             info["com_offset"] = jax.random.uniform(kc, (2,), minval=-r["com"], maxval=r["com"])
             info["delay"] = jax.random.randint(kd, (), 0, r["delay"] + 1)
             info["act_hist"] = jnp.zeros((r["delay"], n))   # 지난 행동들 [1스텝 전, 2스텝 전, ...]
+            kj, ki = jax.random.split(jax.random.fold_in(k3, 11))
+            info["joint_offset"] = jax.random.uniform(kj, (n,), minval=-r["joint_offset"], maxval=r["joint_offset"])
+            tilt = jax.random.uniform(ki, (2,), minval=-r["imu_tilt"], maxval=r["imu_tilt"])
+            info["imu_rot"] = tilt_matrix(tilt[0], tilt[1])
         metrics = {f"reward/{k}": jnp.zeros(()) for k in self.reward_weights}
         metrics.update({f"gait/{k}": jnp.zeros(()) for k in GAIT_METRICS})
         metrics.update({"forward_speed": jnp.zeros(())})
@@ -425,6 +440,8 @@ class BipedWalkMjxEnv(Env):
             applied = jnp.concatenate([action[None], state.info["act_hist"]])[state.info["delay"]]
         # 정책 관절은 home + 행동, 나머지(머리 등)는 home. 관절 범위 밖은 자름
         q_des = self.act_home.at[self.policy_act].add(sp.action_scale * applied)
+        if self.domain_rand:   # 서보 영점 오차: 서보 기준의 목표 각도가 실제로는 그만큼 어긋난 자리
+            q_des = q_des.at[self.policy_act].add(state.info["joint_offset"])
         q_des = jnp.clip(q_des, self.act_low, self.act_high)
 
         mx = self.mx
@@ -632,6 +649,10 @@ class BipedWalkMjxEnv(Env):
             vel_body = rot.T @ data.qvel[0:3]
             ang_body = data.qvel[3:6]
         gravity_body = rot.T @ jnp.array([0.0, 0.0, -1.0])
+        q_rel = data.qpos[self.qpos_idx] - self.q_home
+        if self.domain_rand and not full:   # 조립 오차: IMU가 기울게 붙음, 서보는 영점이 어긋난 각도를 읽음
+            gravity_body, ang_body = info["imu_rot"] @ gravity_body, info["imu_rot"] @ ang_body
+            q_rel = q_rel - info["joint_offset"]
         phase = 2.0 * jnp.pi * info["time"] / self.spec.gait_period
         height = data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2]) - self.spec.nominal_height
         if self.spec.deployable_obs and not full:   # 실물에 없는 센서 값은 0 (MujocoRunner.obs와 같게)
@@ -641,7 +662,7 @@ class BipedWalkMjxEnv(Env):
             ang_body,
             vel_body,
             jnp.array([height]),
-            data.qpos[self.qpos_idx] - self.q_home,
+            q_rel,
             0.1 * data.qvel[self.qvel_idx],
             info["last_action"],
             jnp.array([self.target_speed]),

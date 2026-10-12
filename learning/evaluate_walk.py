@@ -36,8 +36,11 @@ PUSH_TEST = dict(speeds=(0.3, 0.4), interval=2.0)   # 밀기 시험: 평지에�
 MODEL_ERROR_TEST = {
     "heavy_weak_slow": dict(mass=1.15, motor=0.85, com=(0.01, 0.0), delay=2),    # 몸통 +15 %, 모터 −15 %, 무게중심 앞 1 cm, 40 ms 지연
     "light_strong": dict(mass=0.85, motor=1.15, com=(-0.01, 0.0), delay=1),      # 몸통 −15 %, 모터 +15 %, 무게중심 뒤 1 cm, 20 ms 지연
+    # 조립 오차: 관절마다 서보 영점 ±0.03 rad(≈2°, 고정된 무작위 패턴), IMU가 앞·옆으로 2°씩 기울게 붙음, 20 ms 지연
+    "miscalibrated": dict(mass=1.0, motor=1.0, com=(0.0, 0.0), delay=1, joint_offset=0.03, imu_tilt=(0.035, 0.035)),
 }
-MODEL_ERROR_LABELS = {"heavy_weak_slow": "무겁고·약하고·40 ms", "light_strong": "가볍고·세고·20 ms"}
+MODEL_ERROR_LABELS = {"heavy_weak_slow": "무겁고·약하고·40 ms", "light_strong": "가볍고·세고·20 ms",
+                      "miscalibrated": "조립 오차(관절·IMU 2°)·20 ms"}
 
 
 def model_error_trials(config, policy, cond: dict, episodes: int, seed=0) -> int:
@@ -48,6 +51,11 @@ def model_error_trials(config, policy, cond: dict, episodes: int, seed=0) -> int
     m.body_inertia[b] *= cond["mass"]
     m.body_ipos[b, 0:2] += cond["com"]
     runner.motor_scale, runner.delay = cond["motor"], cond["delay"]
+    if cond.get("joint_offset"):   # 고정된 무작위 패턴 (정책끼리 같은 오차로 비교)
+        runner.joint_offset = np.random.default_rng(42).uniform(-cond["joint_offset"], cond["joint_offset"], runner.spec.n)
+    if cond.get("imu_tilt"):
+        from biped_sim.envs.walk_mjx import tilt_matrix
+        runner.imu_rot = tilt_matrix(*cond["imu_tilt"])
     rows = run_trials(runner, policy, ["mixed"], 1.5, episodes, seed + 7, log=None)
     return int(sum(ok for ok, _, _ in rows["mixed"]))
 
@@ -380,7 +388,8 @@ def main():
         champion_file = CHAMPION_DIR / f"champion_{category}.json"
         champ = json.loads(champion_file.read_text()) if champion_file.exists() else None
         champion_push = None   # 챔피언 파일에 없는 견고함 시험(밀기·모델 오차) 결과를 채움
-        if champ is not None and "robust_ok" not in champ:
+        expected = (len(PUSH_TEST["speeds"]) + len(MODEL_ERROR_TEST)) * args.episodes
+        if champ is not None and champ.get("robust_trials") != expected:   # 없거나 시험 구성이 바뀌었으면 다시 잼
             if base is not None and baseline is not None and Path(champ["params"]).resolve() == baseline.resolve():
                 bs = walking_score(base, target)   # 기준 정책이 바로 챔피언 → 이번에 잰 값
             else:                                  # 아니면 챔피언을 같은 시험으로 직접 잼 (약 1분)

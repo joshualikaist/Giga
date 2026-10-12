@@ -127,6 +127,8 @@ class MujocoRunner:
         self.on_substep = None   # 물리 스텝 직전(토크를 정한 뒤)마다 부를 함수 f(data) (feasibility.py가 토크 최댓값을 놓치지 않게)
         self.motor_scale = 1.0   # 모터 세기 배율 (모델 오차 시험, walk_mjx.DOMAIN_RAND와 같은 방식)
         self.delay = 0           # 제어 지연 [제어 스텝]: k면 k 스텝 전의 행동이 지금 적용됨 (1 = 20 ms)
+        self.joint_offset = np.zeros(self.spec.n)   # 서보 영점 오차 [rad] (정책 관절 순서): 읽기·명령 모두 어긋남
+        self.imu_rot = np.eye(3)                    # IMU 장착 기울기 (walk_mjx.tilt_matrix)
 
     def reset(self) -> np.ndarray:
         mujoco.mj_resetData(self.model, self.data)
@@ -149,7 +151,7 @@ class MujocoRunner:
         else:
             applied = action
         q_des = i["act_home"].copy()              # 정책 관절은 home + 행동, 나머지(머리 등)는 home
-        q_des[i["policy_act"]] += self.spec.action_scale * applied
+        q_des[i["policy_act"]] += self.spec.action_scale * applied + self.joint_offset
         q_des = np.clip(q_des, i["act_range"][:, 0], i["act_range"][:, 1])
         for _ in range(self.n_substeps):   # 물리 1스텝마다 PD로 토크 계산 (모터 드라이버 역할)
             q, dq = d.qpos[i["act_qpos_idx"]], d.qvel[i["act_qvel_idx"]]
@@ -178,8 +180,8 @@ class MujocoRunner:
         height = d.xpos[i["base_body"], 2] - self.ground(*d.xpos[i["base_body"], :2]) - self.spec.nominal_height
         if self.spec.deployable_obs:   # 실물에서 잴 수 없는 몸통 속도·높이는 0 (walk_mjx._observation과 같게)
             vel, height = np.zeros(3), 0.0
-        return np.concatenate([rot.T @ [0, 0, -1.0], d.qvel[3:6], vel, [height],
-                               d.qpos[i["qpos_idx"]] - i["q_home"], 0.1 * d.qvel[i["qvel_idx"]],
+        return np.concatenate([self.imu_rot @ (rot.T @ [0, 0, -1.0]), self.imu_rot @ d.qvel[3:6], vel, [height],
+                               d.qpos[i["qpos_idx"]] - i["q_home"] - self.joint_offset, 0.1 * d.qvel[i["qvel_idx"]],
                                self.last_action, [self.target_speed], [np.sin(phase), np.cos(phase)]]
                               ).astype(np.float32)
 
