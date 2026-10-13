@@ -53,6 +53,24 @@ from gpu_env import ensure_gpu_env
 from biped_sim import paths
 
 RUNS_DIR = paths.OUTPUT_DIR / "learning"
+WATCH_PID_FILE = ".watch_window.pid"   # --watch로 띄운 학습 화면의 프로세스 번호 (다음 학습이 닫을 때 씀)
+
+
+def close_previous_watch(pid_file: Path) -> bool:
+    """지난 --watch 학습이 띄운 학습 화면(play_walk.py --live)이 아직 떠 있으면 닫음. 닫았으면 True.
+    pid 파일에 적힌 프로세스만, 그리고 정말 play_walk.py --live일 때만 닫음 (사용자가 직접 띄운 창은 그대로)."""
+    try:
+        pid = int(pid_file.read_text())
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except (OSError, ValueError):   # 파일 없음 / 이미 꺼진 프로세스 / /proc 없는 OS
+        return False
+    if not any(arg.endswith(b"play_walk.py") for arg in cmdline) or b"--live" not in cmdline:
+        return False                # 번호가 다른 프로그램에 다시 쓰인 경우
+    try:
+        os.kill(pid, 15)            # SIGTERM
+    except OSError:
+        return False
+    return True
 
 
 def add_command_inputs(params, base_old: int, history: int, privileged: bool, commands: dict):
@@ -300,9 +318,13 @@ def main():
               "Enter = 그래프 ↔ 로봇 전환")
     print("=" * 76, flush=True)
     if args.watch:  # 화면은 별도 프로세스(CPU)로: 창을 닫아도 학습은 계속되고, 학습이 끝나도 창은 남음
+        pid_file = Path(args.output_dir) / WATCH_PID_FILE
+        if close_previous_watch(pid_file):  # 지난 학습이 띄운 창이 남아 있으면 CPU를 나눠 쓰므로 닫음
+            print("지난 학습의 학습 화면을 닫았습니다 (새 학습 화면으로 바꿈)")
         watch_log = open(run_dir / "watch.log", "w")
-        subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("play_walk.py")), "--live",
-                          "--params", str(run_dir / "params.pkl")], stdout=watch_log, stderr=subprocess.STDOUT)
+        viewer = subprocess.Popen([sys.executable, "-u", str(Path(__file__).with_name("play_walk.py")), "--live",
+                                   "--params", str(run_dir / "params.pkl")], stdout=watch_log, stderr=subprocess.STDOUT)
+        pid_file.write_text(str(viewer.pid))
 
     terrain, spawn_area = None, None
     if args.terrain == "rough":   # 넓은 지형의 무작위 위치에서 출발. 앞으로 2.5 m는 지형 안이도록

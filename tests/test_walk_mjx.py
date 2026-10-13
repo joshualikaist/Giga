@@ -312,6 +312,29 @@ def test_command_mode_conversion_and_tracking(tmp_path):
     assert abs(v[0] - 0.3) < 0.05 and abs(v[1]) < 0.05 and abs(w) < 0.1      # 목표 0.3 m/s로 곧게 걷는 정책
 
 
+def test_close_previous_watch_only_closes_live_viewer(tmp_path):
+    """--watch 새 학습이 지난 학습 화면만 닫음: pid 파일의 프로세스가 play_walk.py --live일 때만 끄고, 다른 프로그램은 그대로."""
+    import subprocess
+    import time
+
+    from train_walk_gpu import close_previous_watch
+
+    pid_file = tmp_path / ".watch_window.pid"
+    assert not close_previous_watch(pid_file)                       # 파일 없음
+    sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
+    other = subprocess.Popen(sleeper + ["other.py"])                # 다른 프로그램: 그대로 둠
+    viewer = subprocess.Popen(sleeper + ["play_walk.py", "--live"])  # 학습 화면처럼 보이는 프로세스
+    try:
+        time.sleep(0.2)
+        pid_file.write_text(str(other.pid))
+        assert not close_previous_watch(pid_file) and other.poll() is None
+        pid_file.write_text(str(viewer.pid))
+        assert close_previous_watch(pid_file)
+        assert viewer.wait(timeout=5) != 0
+    finally:
+        other.kill(), viewer.kill()
+
+
 def test_gait_report_handles_joints_left_out_of_limp_score(tmp_path):
     """절뚝임 점수에서 뺀 관절(거의 안 움직임)이 있어도 걸음 그래프·출력이 동작 (2026-10-11 자동 평가가 여기서 멈춘 적 있음)."""
     from analyze_gait import print_report, save_plots
