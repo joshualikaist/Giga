@@ -437,6 +437,25 @@ def test_pretrained_walk_policy_walks_symmetrically():
     assert abs(m["yaw_deg"]) < 10
 
 
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_pretrained_duck_cmd_policy_follows_commands():
+    """learning/pretrained/duck_cmd_policy.pkl (docs/09 §10의 결과): 평지에서 옆걸음·제자리 돌기 명령을
+    명령 시험과 같은 허용 오차(±0.03 m/s, ±0.1 rad/s) 안으로 10초 동안 따라간다."""
+    from evaluate_walk import COMMAND_TOL, command_tracking
+    from walk_tools import load_policy, make_runner, run_episode
+
+    policy, config = load_policy(LEARNING_DIR / "pretrained" / "duck_cmd_policy.pkl")
+    for cmd in [(0.0, 0.08, 0.0), (0.0, 0.0, 0.4)]:
+        runner = make_runner(config)
+        runner.command = np.array(cmd)
+        rec = run_episode(runner, policy)
+        v, w = command_tracking(rec)
+        assert not rec["fell"]
+        assert np.linalg.norm(v - np.array(cmd[:2])) <= COMMAND_TOL["lin"], (cmd, v)
+        assert abs(w - cmd[2]) <= COMMAND_TOL["yaw"], (cmd, w)
+
+
 def test_terrain_env_measures_height_from_local_ground():
     """지형 위 학습 환경: GPU 쪽 땅 높이 계산(ground)이 terrain.height_at과 같고, 무작위 출발 위치에서
     몸통이 그 자리 땅 위 기준 높이에 놓인다 (관측의 높이 오차가 작다)."""

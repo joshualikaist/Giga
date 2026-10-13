@@ -1,0 +1,101 @@
+{
+  "run_dir": null,
+  "init_from": null,
+  "robot": "open_duck_mini",
+  "target_speed": 0.15,
+  "steps": 22118400,
+  "steps_requested": 20000000,
+  "envs": 1024,
+  "seed": 0,
+  "physics_dt": 0.004,
+  "control_dt": 0.02,
+  "gait_period": 0.6,
+  "action_scale": 0.3,
+  "reward_weights": {
+    "forward_velocity": 6.0,
+    "lateral_velocity": -1.0,
+    "yaw_rate": -0.5,
+    "upright": -2.0,
+    "height": -10.0,
+    "feet_air_time": 2.0,
+    "action_rate": -0.02,
+    "torque": -0.01,
+    "alive": 0.5,
+    "flight": -1.0,
+    "gait_phase": 1.0,
+    "heading": -1.0,
+    "symmetry": -8.0,
+    "step_length": 5.0,
+    "reference": 0.0,
+    "com_over_stance": 1.0,
+    "servo_overload": -1.0,
+    "yaw_tracking": 2.0,
+    "foot_clearance": 2.0
+  },
+  "servo": "open_duck",
+  "friction_range": [
+    0.4,
+    1.0
+  ],
+  "home_knee": 0.6,
+  "push": [
+    0.5,
+    2.0
+  ],
+  "deployable_obs": true,
+  "privileged_critic": true,
+  "domain_rand": {
+    "mass": 0.15,
+    "motor": 0.15,
+    "com": 0.01,
+    "delay": 2,
+    "joint_offset": 0.03,
+    "imu_tilt": 0.035
+  },
+  "obs_history": 3,
+  "command_obs": true,
+  "commands": {
+    "vx": [
+      -0.1,
+      0.25
+    ],
+    "vy": [
+      -0.15,
+      0.15
+    ],
+    "wz": [
+      -0.5,
+      0.5
+    ],
+    "resample": 5.0,
+    "zero_prob": 0.35
+  },
+  "terrain": {
+    "kind": "training",
+    "seed": 0,
+    "half_size": 6.0,
+    "resolution": 0.08,
+    "difficulty": [
+      0.8,
+      2.0
+    ]
+  },
+  "policy_hidden": [
+    128,
+    128,
+    128
+  ],
+  "value_hidden": [
+    256,
+    256,
+    256
+  ],
+  "saved_step": 22118400,
+  "finished": true,
+  "history": [
+    "Open Duck Mini v2 명령 따라 걷기 정책 (4차 자율 학습 C6, 261014_005355_duck_cmd_track6). 실물 센서만 사용 (--deployable-obs), 관측 기록 3스텝",
+    "시작: 실물 관측 챔피언 261012_140257_duck_obs_history (보행 점수 88.1) → 명령 3칸 관측으로 늘려 C1~C6 이어서 학습 (각 2,200만 스텝)",
+    "C1 앞 속도 0.05~0.25 → C2 회전 ±0.3 → C3 옆 ±0.1·뒤 −0.1 → C4 회전 ±0.5 → C5 옆 ±0.15 → C6 forward_velocity 2 → 6",
+    "평가: 명령 점수 90.9 (30 / 33), 보행 점수 86.2, 밀기 20 / 20, 모델 오차 29 / 30. 자세한 기록: docs/10 §9, docs/09 §10"
+  ]
+}
