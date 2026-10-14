@@ -2,6 +2,7 @@
 
     ros2 launch giga_sim_ros duck.launch.py                          # 평지, 저장소의 명령 따라 걷기 정책
     ros2 launch giga_sim_ros duck.launch.py terrain:=mixed           # 언덕·경사로·장애물 (원점 주변은 평평)
+    ros2 launch giga_sim_ros duck.launch.py terrain:=playground      # 직접 만든 코스 (models/courses, docs/11 §3)
     ros2 launch giga_sim_ros duck.launch.py policy:=output/learning/<실행>/policy.npz
     다른 터미널에서 조종:  ros2 run giga_sim_ros key_teleop          (방향키, 그 터미널을 클릭해 둔 채로)
     ros2 launch giga_sim_ros duck.launch.py phone:=true               # + 핸드폰 조이스틱 (출력에 나오는 주소를 핸드폰 브라우저로)
@@ -81,7 +82,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('policy', default_value='learning/pretrained/duck_cmd_policy.npz',
                               description='numpy 정책 (.npz, 같은 이름 .json = 학습 설정). 저장소 기준 상대 경로 가능'),
-        DeclareLaunchArgument('terrain', default_value='flat', description='flat | hills | slopes | obstacles | mixed'),
+        DeclareLaunchArgument('terrain', default_value='flat',
+                              description='flat | hills | slopes | obstacles | mixed, 또는 직접 만든 코스 '
+                                          '(models/courses: stairs, ramp, stones, gravel, playground, drawing, 또는 .yaml/.png 경로)'),
         DeclareLaunchArgument('terrain_difficulty', default_value='1.0', description='험한 정도 (평가 시험은 1.5, 2.0)'),
         DeclareLaunchArgument('terrain_seed', default_value='0', description='지형 무작위 시드'),
         DeclareLaunchArgument('viewer', default_value='true', description='MuJoCo 뷰어 창'),

@@ -47,6 +47,7 @@ from tf2_ros import TransformBroadcaster
 from biped_sim import (SIMPLE_BIPED, JointPDController, RobotInterface, SimConfig,
                        build_robot_model, passive_viewer, track_body_camera)
 from biped_sim.envs import walk_spec
+from biped_sim.course import load_course
 from biped_sim.terrain import KINDS, make_terrain
 from biped_sim.utils import quat_wxyz_to_xyzw  # MuJoCo (w,x,y,z) → ROS (x,y,z,w)
 
@@ -88,15 +89,17 @@ class SimNode(Node):
         servo = self.declare_parameter('servo', 'open_duck').value          # 오리만: ideal | open_duck
         home_knee = self.declare_parameter('home_knee', 0.0).value          # 오리만: 서 있는 무릎 각도 [rad], 0 = 기본
         # 지형: flat | hills | slopes | obstacles | mixed (biped_sim.terrain, 원점 주변은 평평한 출발 자리)
+        #       또는 직접 만든 코스: models/courses의 이름(stairs, playground…), .yaml 또는 흑백 .png 경로 (biped_sim.course)
         terrain_kind = self.declare_parameter('terrain', 'flat').value
         terrain_difficulty = self.declare_parameter('terrain_difficulty', 1.0).value
         terrain_seed = self.declare_parameter('terrain_seed', 0).value
         terrain_size = self.declare_parameter('terrain_size', 4.0).value    # [m] 원점에서 ±이만큼
-        if terrain_kind not in KINDS:
-            raise ValueError(f"terrain은 {KINDS} 중 하나: {terrain_kind!r}")
-        terrain = None if terrain_kind == 'flat' else make_terrain(
-            terrain_kind, seed=terrain_seed, difficulty=terrain_difficulty,
-            size_x=terrain_size, size_y=terrain_size, center=(0.0, 0.0))
+        if terrain_kind in KINDS:
+            terrain = None if terrain_kind == 'flat' else make_terrain(
+                terrain_kind, seed=terrain_seed, difficulty=terrain_difficulty,
+                size_x=terrain_size, size_y=terrain_size, center=(0.0, 0.0))
+        else:
+            terrain = load_course(terrain_kind)
 
         # ---------------------------------------------------------------- MuJoCo 모델
         if robot_name == 'simple_biped':
@@ -137,7 +140,9 @@ class SimNode(Node):
         self.create_subscription(JointState, 'joint_commands', self.on_command, 10)
         self.shown_command = None   # 화면 표시용: policy_node가 실제로 넣은 명령
         self.create_subscription(Twist, 'policy/command', self.on_policy_command, 10)
-        self.terrain_extent = terrain_size if terrain is not None else 4.0
+        # 지형 전체 보기(9)의 중심·거리
+        self.terrain_center = terrain.center if terrain is not None else (0.0, 0.0)
+        self.terrain_extent = max(terrain.size_x, terrain.size_y) if terrain is not None else 4.0
         self.create_service(Trigger, 'sim/reset', self.on_reset)
 
         dt = self.model.opt.timestep
@@ -302,7 +307,7 @@ class SimNode(Node):
                 self.pending_view = None
                 if cam['zoom'] is None:   # 지형 전체: 원점 위에서 내려다보기
                     self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-                    self.viewer.cam.lookat[:] = (0.0, 0.0, 0.0)
+                    self.viewer.cam.lookat[:] = (*self.terrain_center, 0.0)
                     self.viewer.cam.distance = 2.6 * self.terrain_extent
                 else:
                     track_body_camera(self.robot.base_body_id, distance=cam['zoom'] * self.view_distance)(self.viewer)

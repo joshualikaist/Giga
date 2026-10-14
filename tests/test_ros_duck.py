@@ -245,3 +245,15 @@ def test_phone_joystick_drives_duck_over_http(driver):
         out = stop_launch(proc)
     assert "핸드폰 조이스틱" in out and "Traceback" not in out, out
     assert out.count("process has finished cleanly") == 3, out
+
+
+def test_duck_launch_with_course_file(driver):
+    """terrain:=playground (직접 만든 코스, models/courses) → sim_node가 코스를 읽고, 오리가 출발 자리에 서서 앞으로 걸음."""
+    proc = start_launch("terrain:=playground")
+    try:
+        assert driver.wait_for(lambda: driver.base and driver.reset.service_is_ready(), 30.0), "코스를 띄우지 못함"
+        driver.drive(0.15, 0.0, 0.0, 3.0)
+    finally:
+        out = stop_launch(proc)
+    assert "지형 playground" in out and "Traceback" not in out, out
+    assert max(b[3] for b in driver.base) < 30 and driver.base[-1][0] > 0.2

@@ -202,9 +202,9 @@ python -m pytest
 창 없이 약 1분 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 (`pytest`만 치면 "명령을 찾을 수 없음"이 나올 수 있습니다: 시스템에 이미 깔린 pytest를 쓰느라 `pytest` 명령이 따로 안 생겨서. `python -m pytest`는 항상 됩니다.)
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 35 skipped`).
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `38 passed, 36 skipped`).
 `skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(20개, 그 환경에서
-`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(10개). 설치하면 그만큼 `passed`로 바뀝니다.
+`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(11개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ---
 
@@ -495,6 +495,11 @@ MuJoCo 창에서는 숫자 키로 보기를 바꿉니다: `6` 따라가기 · `7
 
 <img src="docs/images/phone_joystick.png" width="480">
 
+**직접 만든 험지에서**: `terrain:=playground`(계단·경사로·디딤돌·자갈밭이 둘러싼 놀이터) 같은 예시 코스, 또는 직접 쓴 코스 파일(YAML)·
+그림판으로 그린 흑백 그림(PNG)을 `terrain:=내코스.yaml`로 띄웁니다. 만드는 법 → [docs/11 §3](docs/11_ros_duck_teleop.md)
+
+<img src="docs/images/duck_courses.png" width="100%">
+
 ✅ 확인: 키를 누를 때마다 터미널에 `명령  앞뒤 +0.05 m/s …`가 바뀌고, MuJoCo 창의 오리가 그쪽으로 걸으면 성공
 (카메라가 오리를 따라가므로 바닥 격자가 흘러가는 것으로 보입니다). 넘어지면 1초 뒤 처음 자리로 돌아옵니다.
 
@@ -604,6 +609,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── mjcf/falling_box.xml      ← MJCF Hello World (t01, t02)
 │   ├── urdf/pendulum/pendulum.urdf ← 최소 URDF: 링크 2 + 관절 1 (t03)
 │   │                               (2족 로봇 URDF는 ros2_ws/src/giga_description/urdf/ 에 있음)
+│   ├── courses/                  ← 직접 만드는 험지 예시: stairs, ramp, stones, gravel, playground, drawing (docs/11 §3)
 │   └── third_party/              ← 외부 오픈소스 로봇 (내려받아 채움, git 제외. README.md에 출처·라이선스)
 │
 ├── biped_sim/                    ── 시뮬레이터 코어 (Python 패키지)
@@ -617,6 +623,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
 │   ├── terrain.py                ← 울퉁불퉁한 지형(높이맵): 언덕·불규칙한 경사로·장애물·학습용 넓은 지형
 │   ├── policy.py                 ← numpy만으로 학습한 정책 돌리기 (ROS2 policy_node, 실물 보드)
+│   ├── course.py                 ← 직접 만드는 험지: 코스 파일(YAML)·흑백 그림(PNG) → 높이맵, 미리 보기
 │   └── envs/                     ← 강화학습 환경
 │       ├── balance.py            ←   밀기 버티기 (Gymnasium, CPU) + 평가 함수
 │       ├── walk_spec.py          ←   보행 과제 설정·서보 모델·학습과 같은 모델·관측 계산 (jax 없이: ROS2 노드도 씀)
@@ -637,6 +644,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_tutorials_and_ros.py ← 튜토리얼 실행 + ROS2 robot_state_publisher URDF 파싱
 │   ├── test_ros_sim_node.py      ← sim_node 통합: 주기, 명령, 초기화, IMU·TF, 정상 종료
 │   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
+│   ├── test_course.py            ← 직접 만드는 험지: 블록 높이, 그림 방향, 예시 코스
 │   ├── test_ros_duck.py          ← 오리 + 학습한 정책을 ROS2로: /cmd_vel대로 걷기, /policy/reset (파일 있을 때만)
 │   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
 │   ├── test_open_duck.py         ← 오리 로봇: 빌더 보완, 바닥 1 mm 위 시작, 좌우 부호, 서 있기 (파일 있을 때만)
@@ -723,6 +731,6 @@ flowchart TD
 | 오리 서보는 데이터시트 기준 정지 토크 1.91 N·m인데 시뮬레이션 기본값은 3.23 N·m, 속도에 따른 감소도 없었다 | [docs/09 §8](docs/09_open_source_robot.md) |
 | 보상을 더하는 것보다 **시험만큼 험한 곳에서 연습**하는 것이 효과가 가장 컸다 (보행 점수 77.5 → 86.9) | [docs/10 §6](docs/10_auto_research.md) |
 | 시뮬레이션에서만 아는 센서 값(몸통 속도·높이)을 가리면 잘 걷던 정책이 거의 멈춘다 (0.15 → 0.03 m/s) | [docs/09 §9.13](docs/09_open_source_robot.md) |
-| ROS 타이머는 놓친 호출을 따라잡지 않는다: 화면 갱신이 5 ms씩 기다리면 시뮬레이션이 실제 시간의 0.7배로 느려짐 → 지난 시간만큼 물리 스텝 | [docs/11 §4](docs/11_ros_duck_teleop.md) |
+| ROS 타이머는 놓친 호출을 따라잡지 않는다: 화면 갱신이 5 ms씩 기다리면 시뮬레이션이 실제 시간의 0.7배로 느려짐 → 지난 시간만큼 물리 스텝 | [docs/11 §5](docs/11_ros_duck_teleop.md) |
 
 </details>

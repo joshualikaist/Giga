@@ -1,0 +1,10 @@
+# 계단 (쉬움 → 어려움): 1 cm 계단 4칸 오르내리기 → 1.5 cm 3칸 → 2 cm 3칸. 계단은 코스 폭 전체 (옆으로 떨어지는 낭떠러지 없음)
+# 오리는 (0, 0)에서 +x를 보고 출발. 위치·크기 [m]. 형식: biped_sim/course.py, docs/11 §3
+# 2026-10-14 측정 (R1 정책, 앞 0.10~0.20): 턱 한 칸 1 cm 이하는 늘 넘음, 1.5 cm는 3번 중 1번 넘어지고 1번 막힘, 2 cm는 못 넘음
+name: 계단
+area: {x: [-1.0, 11.5], y: [-2.0, 2.0]}
+resolution: 0.02
+features:
+  - {type: stairs, at: [0.8, 0.0], steps: 4, rise: 0.010, run: 0.30, width: 4.0, top: 0.6, down: true}
+  - {type: stairs, at: [4.6, 0.0], steps: 3, rise: 0.015, run: 0.30, width: 4.0, top: 0.6, down: true}
+  - {type: stairs, at: [7.8, 0.0], steps: 3, rise: 0.020, run: 0.30, width: 4.0, top: 0.6, down: true}

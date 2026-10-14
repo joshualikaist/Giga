@@ -1,0 +1,9 @@
+# 경사로 (쉬움 → 어려움): 4° 오르막·내리막 → 6° → 9° → 옆으로 4° 기운 길. 모두 코스 폭 전체 (옆 낭떠러지 없음)
+name: 경사로
+area: {x: [-1.0, 12.0], y: [-2.0, 2.0]}
+resolution: 0.02
+features:
+  - {type: ramp, at: [0.8, 0.0], length: 1.0, angle: 4, width: 4.0, top: 0.5, down: true}    # 꼭대기 7.0 cm
+  - {type: ramp, at: [3.8, 0.0], length: 1.0, angle: 6, width: 4.0, top: 0.5, down: true}    # 10.5 cm
+  - {type: ramp, at: [6.8, 0.0], length: 0.8, angle: 9, width: 4.0, top: 0.5, down: true}    # 12.7 cm
+  - {type: ramp, at: [9.6, 0.0], length: 0.0, rise: 0.0, width: 4.0, top: 1.8, cross_slope: 4, mode: add}   # 옆 기울기: 왼쪽 높고 오른쪽 낮음
