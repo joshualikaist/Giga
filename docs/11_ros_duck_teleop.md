@@ -8,7 +8,7 @@ GPU(MJX)에서 학습한 명령 따라 걷기 정책(docs/09 §10)을 **ROS2 토
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | ROS로 정책 돌리기 (sim_node + policy_node), 키보드 조종 (key_teleop) | ✅ 이 문서 §1~§5 |
-| 2 | 핸드폰 조이스틱 (같은 Wi-Fi, 브라우저만) | 다음 |
+| 2 | 핸드폰 조이스틱 (같은 Wi-Fi, 브라우저만) | ✅ §2.1 |
 | 3 | 직접 만드는 험지 (YAML 블록 코스, 흑백 PNG 높이맵) | |
 | 4 | 조종 기록 → 넘어진 곳·조종 습관을 학습에 → 다시 확인 | |
 
@@ -72,6 +72,30 @@ ros2 run giga_sim_ros key_teleop
 ⚠ **한글 입력 상태면 동작하지 않습니다**: `i`를 누르면 `ㅑ`가 들어가고, 모르는 키는 '멈춤'으로 처리되며, 움직임 키를 눌러도
 화면에 아무것도 표시되지 않아 고장처럼 보입니다 (한/영 키로 영어로 바꾸면 됨). 그래서 방향키를 쓰는 `key_teleop`을 만들었습니다.
 
+### 2.1 핸드폰 조이스틱
+
+```bash
+ros2 launch giga_sim_ros duck.launch.py phone:=true        # terrain:=mixed 등과 함께 써도 됨
+```
+
+출력에 나오는 주소(예: `핸드폰 조이스틱: 같은 Wi-Fi의 핸드폰 브라우저에서  http://192.168.0.14:8080`)를 **PC와 같은 Wi-Fi에 연결된
+핸드폰**의 브라우저에 입력합니다. 앱 설치는 필요 없습니다. 핸드폰을 **가로로** 들면 양손으로 쓰기 좋습니다.
+
+<img src="images/phone_joystick.png" width="560">
+
+| 화면 | 동작 |
+|---|---|
+| 왼쪽 스틱 | 위·아래 = 앞·뒤, 왼·오른 = 옆걸음. 끝까지 밀면 학습한 최대 명령 (앞 0.25, 뒤 0.15, 옆 0.15 m/s) × 속도 배율 |
+| 오른쪽 스틱 | 왼·오른 = 왼쪽·오른쪽으로 돌기 (최대 0.5 rad/s × 속도 배율) |
+| 멈춤 | 두 스틱 모두 0 |
+| 처음으로 | 오리를 처음 자리로 (`/policy/reset`) |
+| 속도 배율 | 스틱 끝의 명령 크기 (기본 60 %, 처음엔 작게) |
+
+- 스틱을 놓으면 0. 핸드폰은 초당 약 15번 스틱 값을 보내고, **0.5초 동안 아무것도 오지 않으면**(화면 꺼짐, Wi-Fi 끊김) 멈춥니다.
+- 화면 아래 글자: 실제로 보낸 명령과 오리 위치. "연결 끊김"이면 PC와 같은 Wi-Fi인지 확인. 그래도 안 되면 PC 방화벽
+  (`sudo ufw allow 8080/tcp`) 또는 공유기의 '기기 간 통신 차단(AP 격리)' 설정.
+- 웹 서버는 파이썬 기본 라이브러리(`http.server`)만 씀. 페이지가 m/s로 바꿔 보내고 노드가 학습 범위로 한 번 더 자름.
+
 ## 3. 무엇을 만들었나
 
 | 파일 | 하는 일 |
@@ -81,6 +105,7 @@ ros2 run giga_sim_ros key_teleop
 | `ros2_ws/.../sim_node.py` | `robot:=open_duck_mini`, `terrain:=…` 추가. 실제 시간 맞추기 (§4). 화면 보기 6~9, 명령·위치 표시 |
 | `ros2_ws/.../policy_node.py` | 센서 토픽 + `/cmd_vel` → 관절 목표 50 Hz, `/policy/reset` |
 | `ros2_ws/.../key_teleop.py` | 터미널 방향키 → `/cmd_vel` 10 Hz (한글 입력 상태에서도 동작, 지금 명령 표시) |
+| `ros2_ws/.../phone_joystick.py` | 웹 페이지 조이스틱 (두 스틱·멈춤·처음으로·속도 배율) → `/cmd_vel` 20 Hz, 0.5초 끊기면 멈춤 |
 | `ros2_ws/.../duck.launch.py` | 둘을 함께 실행. 정책의 학습 설정에서 로봇·서보·자세를 읽어 sim_node에 넘김 |
 
 ## 4. 결과: ROS를 거쳐도 학습한 대로 걷나
@@ -112,7 +137,7 @@ ros2 run giga_sim_ros key_teleop
 
 | 파일 | 역할 |
 |---|---|
-| `tests/test_ros_duck.py` | launch로 오리 + 정책 실행 → `/cmd_vel` 앞·옆 명령대로 움직임, `/policy/reset`, 깔끔한 종료. key_teleop: 키 해석, 가상 터미널에서 방향키 → `/cmd_vel` |
+| `tests/test_ros_duck.py` | launch로 오리 + 정책 실행 → `/cmd_vel` 앞·옆 명령대로 움직임, `/policy/reset`, 깔끔한 종료. key_teleop: 키 해석, 가상 터미널에서 방향키 → `/cmd_vel`. 핸드폰 조이스틱: 페이지, HTTP 명령대로 걷기, 끊기면 멈춤, 처음으로 |
 | `tests/test_open_duck.py::test_walk_spec_and_numpy_policy_run_without_jax` | ROS용 환경(jax 없음)에서 모델·numpy 정책, IMU 자세 → 중력 방향 |
 | `tests/test_walk_mjx.py::test_numpy_policy_matches_brax` | numpy 정책 = Brax 정책 |
 | `learning/pretrained/duck_cmd_policy.npz` (+ `.json`) | 명령 따라 걷기 챔피언 (docs/09 §10)의 numpy 판 |

@@ -63,6 +63,12 @@ class Driver:
                 next_pub = time.time() + 0.05
             self.executor.spin_once(timeout_sec=0.01)
 
+    def drive_quiet(self, seconds):
+        """seconds 동안 아무것도 보내지 않고 TF만 받음."""
+        end = time.time() + seconds
+        while time.time() < end:
+            self.executor.spin_once(timeout_sec=0.01)
+
     def wait_for(self, cond, timeout):
         end = time.time() + timeout
         while not cond() and time.time() < end:
@@ -189,3 +195,53 @@ def test_key_teleop_publishes_cmd_vel_from_terminal():
         executor.shutdown()
         node.destroy_node()
         rclpy.shutdown(context=ctx)
+
+
+def test_phone_joystick_drives_duck_over_http(driver):
+    """phone:=true: 웹 페이지가 열리고, 페이지처럼 HTTP로 앞 0.15를 보내면 오리가 앞으로 걷고, 보내기를 멈추면 0.5초 뒤 멈춤 명령,
+    /reset이면 처음 자리로. 스틱 끝 = 정책의 학습 범위 (페이지에 들어감)."""
+    import json
+    import urllib.request
+
+    from geometry_msgs.msg import Twist
+
+    port = 18089
+    cmds = []
+    driver.node.create_subscription(Twist, "cmd_vel", lambda m: cmds.append(m.linear.x), 50)
+    proc = start_launch("phone:=true", f"port:={port}")
+    url = f"http://localhost:{port}"
+
+    def post(path, body):
+        req = urllib.request.Request(url + path, data=json.dumps(body).encode(), method="POST")
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return json.loads(r.read())
+
+    try:
+        assert driver.wait_for(lambda: driver.base and driver.reset.service_is_ready(), 30.0)
+        page = None
+        end = time.time() + 15
+        while page is None and time.time() < end:
+            try:
+                page = urllib.request.urlopen(url, timeout=2).read().decode()
+            except OSError:
+                driver.executor.spin_once(timeout_sec=0.2)
+        assert page and "오리 조이스틱" in page and '"vx_max": 0.25' in page and '"vx_min": -0.1' in page
+        x0 = driver.base[-1][0]
+        end = time.time() + 5
+        while time.time() < end:                         # 핸드폰처럼 초당 약 15번
+            reply = post("/cmd", {"vx": 0.15, "vy": 0, "wz": 0})
+            driver.executor.spin_once(timeout_sec=0.066)
+        assert reply["cmd"][0] == pytest.approx(0.15) and reply["position"] is not None
+        walked = driver.base[-1][0] - x0
+        cmds.clear()
+        driver.drive_quiet(1.5)
+        assert walked > 0.4, f"앞으로 충분히 가지 않음 ({walked:.2f} m / 5 s)"
+        assert cmds and cmds[-1] == 0.0, "핸드폰 소식이 끊겼는데 멈추지 않음"
+        assert post("/reset", {})["ok"]
+        driver.base.clear()
+        driver.drive_quiet(1.0)
+        assert abs(driver.base[-1][0]) < 0.1
+    finally:
+        out = stop_launch(proc)
+    assert "핸드폰 조이스틱" in out and "Traceback" not in out, out
+    assert out.count("process has finished cleanly") == 3, out

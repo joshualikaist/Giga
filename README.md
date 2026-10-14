@@ -202,9 +202,9 @@ python -m pytest
 창 없이 약 1분 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 (`pytest`만 치면 "명령을 찾을 수 없음"이 나올 수 있습니다: 시스템에 이미 깔린 pytest를 쓰느라 `pytest` 명령이 따로 안 생겨서. `python -m pytest`는 항상 됩니다.)
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 33 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(19개, 그 환경에서
-`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(9개). 설치하면 그만큼 `passed`로 바뀝니다.
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 35 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(20개, 그 환경에서
+`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(10개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ---
 
@@ -490,6 +490,11 @@ ros2 run giga_sim_ros key_teleop
 16단계와 같은 키입니다: ↑↓ 앞뒤 속도, ←→ 돌기, PageUp/PageDown 옆걸음, Space 멈춤, Home 기본(앞 0.15), r 처음 자리로.
 MuJoCo 창에서는 숫자 키로 보기를 바꿉니다: `6` 따라가기 · `7` 위에서 · `8` 옆에서 · `9` 지형 전체.
 
+**핸드폰으로 조종**: `ros2 launch giga_sim_ros duck.launch.py phone:=true`로 실행하고, 출력에 나오는 주소(예: `http://192.168.0.14:8080`)를
+같은 Wi-Fi의 핸드폰 브라우저로 열면 두 스틱 조이스틱이 나옵니다 (앱 설치 없음, 가로로 들기 권장).
+
+<img src="docs/images/phone_joystick.png" width="480">
+
 ✅ 확인: 키를 누를 때마다 터미널에 `명령  앞뒤 +0.05 m/s …`가 바뀌고, MuJoCo 창의 오리가 그쪽으로 걸으면 성공
 (카메라가 오리를 따라가므로 바닥 격자가 흘러가는 것으로 보입니다). 넘어지면 1초 뒤 처음 자리로 돌아옵니다.
 
@@ -665,6 +670,8 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │           ├── giga_sim_ros/sim_node.py         ← MuJoCo를 감싼 ROS2 노드 = "가짜 로봇 하드웨어"
 │           ├── giga_sim_ros/demo_controller.py  ← 토픽만으로 로봇 조종 (stand / squat)
 │           ├── giga_sim_ros/policy_node.py      ← 학습한 보행 정책: IMU·관절 + /cmd_vel → 관절 목표 50 Hz
+│           ├── giga_sim_ros/key_teleop.py       ← 터미널 방향키 → /cmd_vel (한글 입력 상태에서도)
+│           ├── giga_sim_ros/phone_joystick.py   ← 핸드폰 브라우저 조이스틱 → /cmd_vel (같은 Wi-Fi)
 │           ├── giga_sim_ros/shutdown.py         ← Ctrl+C·SIGTERM 안전 종료 처리
 │           ├── launch/sim.launch.py             ← sim_node + robot_state_publisher + RViz + 제어기
 │           ├── launch/duck.launch.py            ← 오리(sim_node) + policy_node (docs/11)
