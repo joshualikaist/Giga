@@ -18,6 +18,9 @@
     ros2 run giga_sim_ros sim_node --ros-args -p viewer:=false       # 화면 없이
     ros2 run giga_sim_ros sim_node --ros-args -p robot:=open_duck_mini -p terrain:=hills   # 오리 + 언덕 (docs/11)
 
+화면 (MuJoCo 창에서 숫자 키): 6 따라가기(기본) · 7 위에서 · 8 옆에서 · 9 지형 전체. 마우스로 돌리고 확대해도 됨.
+    왼쪽 위에 지금 보기, 아래에 policy_node가 넣은 명령(/policy/command)과 몸통 위치를 표시 (MuJoCo 글꼴은 한글이 안 돼 영어).
+
 오리(robot:=open_duck_mini)는 GPU 학습과 똑같은 모델로 만든다 (biped_sim.envs.walk_spec.build_mjx_model:
     서보 모델·서 있는 자세·발 충돌 상자·물리 0.004 s). 학습한 정책은 policy_node가 돌린다 (duck.launch.py).
 
@@ -33,7 +36,7 @@ import mujoco
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Time
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, Twist
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rosgraph_msgs.msg import Clock
@@ -50,6 +53,12 @@ from biped_sim.utils import quat_wxyz_to_xyzw  # MuJoCo (w,x,y,z) → ROS (x,y,z
 from .shutdown import init_with_stop_flag
 
 VIEWER_FPS = 60.0
+# 화면 보기 (숫자 키 → 이름, 카메라). 따라가는 보기는 몸통을 따라가는 MuJoCo 추적 카메라의 각도만 바꾼 것.
+# azimuth 0 = 위에서 볼 때 화면 위쪽이 +x (출발할 때 로봇의 앞)
+VIEWS = {54: ('follow', dict(azimuth=135.0, elevation=-15.0, zoom=1.0)),     # '6'
+         55: ('top', dict(azimuth=0.0, elevation=-89.0, zoom=2.2)),          # '7'
+         56: ('side', dict(azimuth=90.0, elevation=-8.0, zoom=1.5)),         # '8'
+         57: ('map', dict(azimuth=0.0, elevation=-89.0, zoom=None))}         # '9' 지형 전체 (따라가지 않음)
 MAX_CATCH_UP = 25   # 한 번에 따라잡는 최대 물리 스텝 (오리 0.1 s). 이보다 밀리면 나머지는 버림 (시뮬레이션이 잠깐 느려짐)
 
 
@@ -75,7 +84,7 @@ class SimNode(Node):
         self.command_timeout = self.declare_parameter('command_timeout', 0.0).value
         # 로봇: simple_biped(기본) | open_duck_mini. 오리는 학습 설정과 같은 서보 모델·서 있는 자세로
         # (duck.launch.py가 정책의 학습 설정에서 읽어 넘김)
-        robot_name = self.declare_parameter('robot', 'simple_biped').value
+        robot_name = self.robot_name = self.declare_parameter('robot', 'simple_biped').value
         servo = self.declare_parameter('servo', 'open_duck').value          # 오리만: ideal | open_duck
         home_knee = self.declare_parameter('home_knee', 0.0).value          # 오리만: 서 있는 무릎 각도 [rad], 0 = 기본
         # 지형: flat | hills | slopes | obstacles | mixed (biped_sim.terrain, 원점 주변은 평평한 출발 자리)
@@ -126,6 +135,9 @@ class SimNode(Node):
         self.clock_pub = self.create_publisher(Clock, 'clock', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
         self.create_subscription(JointState, 'joint_commands', self.on_command, 10)
+        self.shown_command = None   # 화면 표시용: policy_node가 실제로 넣은 명령
+        self.create_subscription(Twist, 'policy/command', self.on_policy_command, 10)
+        self.terrain_extent = terrain_size if terrain is not None else 4.0
         self.create_service(Trigger, 'sim/reset', self.on_reset)
 
         dt = self.model.opt.timestep
@@ -262,6 +274,9 @@ class SimNode(Node):
             self.damping_mode = False
             self.get_logger().info('명령 재수신 → PD 제어 재개')
 
+    def on_policy_command(self, msg: Twist):
+        self.shown_command = (msg.linear.x, msg.linear.y, msg.angular.z)
+
     def on_reset(self, request, response):
         self.reset_simulation()
         response.success = True
@@ -272,9 +287,35 @@ class SimNode(Node):
     # -------------------------------------------------------------------- 뷰어
     def attach_viewer(self, viewer):
         self.viewer = viewer
-        with viewer.lock():
-            track_body_camera(self.robot.base_body_id, distance=self.view_distance)(viewer)
-        self.viewer_timer = self.create_timer(1.0 / VIEWER_FPS, self.viewer.sync)
+        self.view, self.pending_view = 'follow', 54
+        self.viewer_timer = self.create_timer(1.0 / VIEWER_FPS, self.update_viewer)
+
+    def on_viewer_key(self, keycode: int):
+        """MuJoCo 창에서 키 (화면 스레드에서 불림): 숫자 6~9면 보기 바꾸기를 예약."""
+        if keycode in VIEWS:
+            self.pending_view = keycode
+
+    def update_viewer(self):
+        with self.viewer.lock():
+            if self.pending_view is not None:
+                self.view, cam = VIEWS[self.pending_view]
+                self.pending_view = None
+                if cam['zoom'] is None:   # 지형 전체: 원점 위에서 내려다보기
+                    self.viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                    self.viewer.cam.lookat[:] = (0.0, 0.0, 0.0)
+                    self.viewer.cam.distance = 2.6 * self.terrain_extent
+                else:
+                    track_body_camera(self.robot.base_body_id, distance=cam['zoom'] * self.view_distance)(self.viewer)
+                self.viewer.cam.azimuth, self.viewer.cam.elevation = cam['azimuth'], cam['elevation']
+            font, grid = mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos
+            x, y, _ = self.robot.base_position()
+            cmd = ('cmd  vx {:+.2f} m/s  vy {:+.2f} m/s  wz {:+.1f} rad/s   |   '.format(*self.shown_command)
+                   if self.shown_command is not None else '')
+            self.viewer.set_texts([
+                (font, grid.mjGRID_TOPLEFT, f'view: {self.view}', '6 follow  7 top  8 side  9 map'),
+                (font, grid.mjGRID_BOTTOMLEFT, f'{cmd}position  x {x:+.2f} m  y {y:+.2f} m', ''),
+            ])
+        self.viewer.sync()
 
     def detach_viewer(self):
         if self.viewer_timer is not None:
@@ -293,7 +334,9 @@ def main(args=None):
             # 뷰어는 biped_sim.passive_viewer로 열고(닫을 때 그리기 스레드가 끝날 때까지 기다림),
             # ROS 종료보다 먼저 닫는다. launch_passive를 그대로 쓰면 종료 시 세그폴트나
             # GLXBadContext 후 멈춤이 생기는 것을 확인함 (docs/05_ros2_bridge_plan.md §2)
-            with passive_viewer(node.model, node.data) as viewer:
+            # 학습한 로봇(오리)은 설정 패널을 숨겨 로봇·글자를 크게 (창에서 Tab / Shift+Tab으로 다시 켬)
+            with passive_viewer(node.model, node.data, show_ui=node.robot_name == 'simple_biped',
+                                key_callback=node.on_viewer_key) as viewer:
                 node.attach_viewer(viewer)
                 while not stop.is_set() and viewer.is_running():
                     executor.spin_once(timeout_sec=0.01)

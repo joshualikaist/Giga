@@ -58,7 +58,10 @@ ros2 run giga_sim_ros key_teleop
 
 키를 누를 때마다 터미널에 지금 명령(`명령  앞뒤 +0.10 m/s   옆 …`)이 보입니다. README 16단계(`play_walk.py --view`)와 같은 키입니다.
 
-- 카메라가 오리를 따라가므로, 걷는지는 **바닥 격자가 흘러가는 것**으로 보입니다 (0.1 m/s = 1초에 10 cm).
+- **MuJoCo 창의 보기** (그 창을 클릭하고 숫자 키): `6` 따라가기(기본) · `7` 위에서 · `8` 옆에서 · `9` 지형 전체.
+  위·옆 보기도 오리를 따라가고, 마우스로 돌리거나 확대해도 됩니다. 왼쪽 위에 지금 보기, 아래에 정책에 들어간 명령과 몸통 위치가
+  보입니다 (MuJoCo 글꼴은 한글이 안 돼 영어). 설정 패널은 Tab / Shift+Tab.
+- 따라가기 보기에서는 카메라가 오리와 함께 움직이므로, 걷는지는 **바닥 격자가 흘러가는 것**으로 보입니다 (0.1 m/s = 1초에 10 cm).
 - 지형: `terrain:=hills | slopes | obstacles | mixed` (원점 주변 0.35 m는 평평한 출발 자리, 넓이 8 × 8 m),
   `terrain_difficulty:=1.5` (평가 시험 수준), `terrain_seed:=3`.
 - 다른 정책: `policy:=output/learning/<실행>/policy.npz` — Brax 정책은 먼저 바꾸기:
@@ -75,7 +78,7 @@ ros2 run giga_sim_ros key_teleop
 |---|---|
 | `biped_sim/envs/walk_spec.py` | 보행 과제 설정·서보 모델·학습과 같은 모델 만들기·관측 계산. **jax 없이** import 가능 (전에는 `walk_mjx.py` 안에 있어 GPU 환경에서만 됐음) |
 | `biped_sim/policy.py`, `learning/export_policy.py` | Brax 정책 → numpy (`.npz`: 관측 정규화 + 신경망 층). 행동 차이 7 × 10⁻⁷ (변환할 때 확인). 실물 보드에서도 같은 방식 |
-| `ros2_ws/.../sim_node.py` | `robot:=open_duck_mini`, `terrain:=…` 추가. 실제 시간 맞추기 (§4) |
+| `ros2_ws/.../sim_node.py` | `robot:=open_duck_mini`, `terrain:=…` 추가. 실제 시간 맞추기 (§4). 화면 보기 6~9, 명령·위치 표시 |
 | `ros2_ws/.../policy_node.py` | 센서 토픽 + `/cmd_vel` → 관절 목표 50 Hz, `/policy/reset` |
 | `ros2_ws/.../key_teleop.py` | 터미널 방향키 → `/cmd_vel` 10 Hz (한글 입력 상태에서도 동작, 지금 명령 표시) |
 | `ros2_ws/.../duck.launch.py` | 둘을 함께 실행. 정책의 학습 설정에서 로봇·서보·자세를 읽어 sim_node에 넘김 |
