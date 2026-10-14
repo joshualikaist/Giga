@@ -456,6 +456,47 @@ def test_pretrained_duck_cmd_policy_follows_commands():
         assert abs(w - cmd[2]) <= COMMAND_TOL["yaw"], (cmd, w)
 
 
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_head_sway_and_fast_double_support():
+    """5차: ① 양발 지지 폭은 명령 |vx| 0.15 이하면 0.1 그대로, fast_speed에서 double_support_fast, 사이는 직선
+    ② 오리 학습 환경이 머리 옆 속도²(gait/head_sway)를 재고 head_sway 보상으로 씀 ③ 재생 쪽 걸음 수치에 머리 흔들림 [cm]."""
+    import dataclasses
+
+    import jax
+    from walk_tools import MujocoRunner, gait_metrics, run_episode
+
+    from biped_sim.envs.walk_spec import double_support_width
+
+    spec = walk_mjx.with_servo(walk_mjx.SPECS["open_duck_mini"], "open_duck")
+    assert double_support_width(spec, 0.3) == 0.1                      # 기본: 늘 0.1
+    fast = walk_mjx.spec_from_config({"robot": "open_duck_mini", "double_support_fast": 0.05, "fast_speed": 0.35})
+    assert double_support_width(fast, 0.1) == pytest.approx(0.1)
+    assert double_support_width(fast, -0.25) == pytest.approx(0.075)   # 뒤로도 |vx|
+    assert double_support_width(fast, 0.5) == pytest.approx(0.05)
+    t = np.arange(0, 1, 0.01) + 0.005   # ds 0.05면 양발 지지 시간 비율 20 % (0.1이면 40 %). 경계를 피해 칸 가운데서
+    both = np.array([float(walk_mjx.BipedWalkMjxEnv._gait_phase_match(x, np.array([True, True]), 1.0, 0.05)) for x in t])
+    assert np.mean(both == 1.0) == pytest.approx(0.2, abs=0.02)
+
+    env = walk_mjx.BipedWalkMjxEnv(spec, reward_weights={"head_sway": -3.0})
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    kicked = state.replace(pipeline_state=state.pipeline_state.replace(
+        qvel=state.pipeline_state.qvel.at[1].set(0.4).at[3].set(3.0)))   # 옆으로 밀고 구르게
+    after = jax.jit(env.step)(kicked, np.zeros(spec.n, np.float32))
+    d = after.pipeline_state   # 기대값: 몸통 속도 + 각속도 × (머리 − 몸통)의 옆 성분 (몸통 방향 기준)
+    rot = np.asarray(d.xmat[env.base_body])
+    v = np.asarray(d.qvel[0:3]) + np.cross(rot @ np.asarray(d.qvel[3:6]),
+                                           np.asarray(d.xpos[env.head_body] - d.xpos[env.base_body]))
+    yaw = np.arctan2(rot[1, 0], rot[0, 0])
+    lateral = -np.sin(yaw) * v[0] + np.cos(yaw) * v[1]
+    assert float(after.metrics["gait/head_sway"]) == pytest.approx(lateral ** 2, rel=1e-3)
+    assert lateral ** 2 > 1e-3 and float(after.metrics["reward/head_sway"]) < 0
+
+    runner = MujocoRunner(dataclasses.replace(spec, home_knee=None))
+    m = gait_metrics(run_episode(runner, None, seconds=3.0), runner.info)
+    assert m["head_sway_cm"] is not None and m["head_sway_cm"] < 1.0    # 서 있기만 하면 거의 안 흔들림
+
+
 def test_numpy_policy_matches_brax():
     """learning/export_policy.py로 바꾼 numpy 정책(.npz, ROS2 policy_node가 씀)이 Brax 정책과 같은 행동을 낸다."""
     from walk_tools import load_policy

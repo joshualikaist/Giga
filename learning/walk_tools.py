@@ -228,7 +228,8 @@ def run_episode(runner, policy, viewer=None, on_step=None, seconds: float = EPIS
 
     obs = runner.reset()
     x0 = d.xpos[info["base_body"], 0]
-    rec = {k: [] for k in ("t", "q", "tau", "foot", "foot_rel_z", "base", "rpy", "legs", "toe", "heel")}
+    rec = {k: [] for k in ("t", "q", "tau", "foot", "foot_rel_z", "base", "rpy", "legs", "toe", "heel", "head")}
+    head = info.get("head_body")
     fell = False
     for k in range(round(seconds / W.CONTROL_DT)):
         t0 = time.perf_counter()
@@ -241,6 +242,7 @@ def run_episode(runner, policy, viewer=None, on_step=None, seconds: float = EPIS
         rec["foot"].append(d.xpos[info["foot_bodies"]].copy())
         rec["foot_rel_z"].append([d.xpos[b, 2] - runner.ground(*d.xpos[b, :2]) for b in info["foot_bodies"]])
         rec["base"].append(d.xpos[info["base_body"]].copy())
+        rec["head"].append(d.xpos[head].copy() if head is not None else np.zeros(3))
         rec["rpy"].append([np.arctan2(rot[2, 1], rot[2, 2]), np.arcsin(-np.clip(rot[2, 0], -1, 1)),
                            np.arctan2(rot[1, 0], rot[0, 0])])
         # 고관절·무릎·발목 위치. .copy() 필수: d.xanchor[j]는 MjData 메모리를 가리키는 '창'이라 두면 마지막 값으로 바뀜
@@ -314,6 +316,17 @@ def leg_asymmetry_deg(q, half: int, left=(0, 1, 2), right=(3, 4, 5), sign=(1.0, 
     return float(np.degrees(np.sqrt(np.mean(np.square(diff)))))
 
 
+def head_sway_cm(rec: dict, steady) -> float:
+    """머리 좌우 흔들림 [cm]: 몸통 방향의 옆으로 잰 머리 위치에서 천천히 흘러가는 것(직선 추세)을 빼고 남은 흔들림의
+    5~95 % 범위 (≈ 왼쪽 끝 ~ 오른쪽 끝). 걸음마다 좌우로 움직이는 폭."""
+    yaw = np.unwrap(rec["rpy"][steady, 2]).mean()
+    p = rec["head"][steady, :2]
+    lateral = -np.sin(yaw) * p[:, 0] + np.cos(yaw) * p[:, 1]
+    t = np.arange(len(lateral))
+    residual = lateral - np.polyval(np.polyfit(t, lateral, 1), t)
+    return float(100 * (np.percentile(residual, 95) - np.percentile(residual, 5)))
+
+
 def gait_metrics(rec: dict, info: dict) -> dict:
     """run_episode 기록 → 걸음 수치. 좌우 비교와 절뚝임 점수(대칭 지수 평균) 포함 (analyze_gait.py 설명 참고).
     info: 재생기의 runner.info (정책 관절 이름, 좌우 짝·부호)"""
@@ -374,6 +387,7 @@ def gait_metrics(rec: dict, info: dict) -> dict:
         "body_pitch_mean_deg": float(rpy[:, 1].mean()), "body_pitch_range_deg": float(np.ptp(rpy[:, 1])),
         "body_roll_mean_deg": float(rpy[:, 0].mean()), "body_roll_range_deg": float(np.ptp(rpy[:, 0])),
         "body_height_range_m": float(np.ptp(base[steady, 2])),
+        "head_sway_cm": head_sway_cm(rec, steady) if info.get("head_body") is not None else None,
         "left": L, "right": R, "symmetry_index_pct": symmetry,
         "limp_score_pct": float(np.mean(list(symmetry.values()))),
         "leg_asymmetry_deg": leg_asymmetry_deg(q, round(0.5 * rec["gait_period"] / dt), info["mirror_left"],

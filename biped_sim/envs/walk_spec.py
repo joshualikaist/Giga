@@ -46,6 +46,9 @@ REWARD_WEIGHTS = {
     "yaw_tracking": 0.0,        # exp(−(회전 속도 − 회전 명령)² / 0.1): 명령 모드에서 돌기를 따라가기 (기본 0 = 꺼짐, docs/09 §10)
     "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
                                 #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
+    "head_sway": 0.0,           # (머리의 옆 속도 − 옆 명령)² [m²/s²], 몸통 방향 기준. 머리 속도 ≈ 몸통 속도 + 각속도 × (머리 − 몸통)
+                                #   (목 관절은 home 유지라 거의 안 움직임). 몸통이 좌우로 크게 구르면(roll 32°) 높이 0.38 m의
+                                #   머리가 12 cm씩 흔들림 → 구르기를 줄이게. 기본 0 = 꺼짐. WalkSpec.head_body가 있는 로봇만 (docs/10 5차)
 }
 # 실물과 시뮬레이션의 차이 대비 (--domain-rand): 환경마다 리셋할 때 무작위로 정함 (docs/10 3차)
 DOMAIN_RAND = {"mass": 0.15,        # 몸통 질량 ±15 % (관성도 같은 비율)
@@ -66,7 +69,7 @@ COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
 GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry", "com_shift",
-                "landing", "clearance", "servo_over", "track_lin", "track_yaw")
+                "landing", "clearance", "servo_over", "track_lin", "track_yaw", "head_sway")
 # 명령 따라 걷기 (--cmd-*): 명령 = (앞뒤 속도 vx, 옆 속도 vy [m/s], 회전 속도 wz [rad/s]), 몸통이 향한 방향 기준.
 # 학습 때는 환경마다 이 범위에서 뽑고, resample초마다 새로 뽑음 (걷는 중에 명령이 바뀌는 것도 연습)
 # zero_prob: 성분마다 이 확률로 정확히 0 (범위가 0을 포함할 때만) → '제자리 돌기', '옆으로만', '뒤로만' 같은 명령이 자주 나옴
@@ -102,6 +105,13 @@ class WalkSpec:
     obs_history: int = 0
     # 명령 따라 걷기: 관측의 '목표 속도' 1칸 대신 명령 3칸 (vx, vy, wz)
     command_obs: bool = False
+    head_body: str | None = None                          # 머리 바디 (head_sway 보상·흔들림 측정용)
+    # gait_phase 보상의 양발 지지 구간: 박자가 바뀌는 앞뒤 double_support 주기씩 (기본 0.1 → 한 주기의 40 %가 양발,
+    # 발마다 디딤 비율 β = 0.7). 서보 속도로 낼 수 있는 최고 속도는 β로 정해짐 (docs/09 §8.5: β 0.7 → 0.22~0.28 m/s,
+    # 0.6 → 0.34~0.43 m/s). double_support_fast를 주면 앞뒤 명령 속도가 target_speed → fast_speed로 갈수록 그 값으로 줄임
+    double_support: float = 0.1
+    double_support_fast: float | None = None
+    fast_speed: float = 0.375
 
     @property
     def n(self) -> int:
@@ -150,6 +160,7 @@ SPECS = {
                             roles={"hip_pitch": (1.0, -0.5), "knee": (0.0, 1.0), "ankle": (-1.0, -0.5)}),
         sim_overrides=dict(collision_boxes=_DUCK_FEET, collision_bodies=tuple(_DUCK_FEET)),
         hip_roll_joints=("left_hip_roll", "right_hip_roll"),
+        head_body="head_assembly",                                       # 머리 + 목 약 0.53 kg (전체 2.06 kg), 몸통 위 0.19 m
         clearance_target=0.03,   # 장애물 2.75 cm(험한 정도 1.5)를 넘을 높이. §8.3: 흔듦 0.15 s로는 서보 속도상 약 1.7 cm가 한계
     ),
 }
@@ -261,6 +272,8 @@ def build_mjx_model(spec: WalkSpec = SPECS["simple_biped"], terrain=None) -> tup
         "home_qpos": model.key("home").qpos.copy(),
         "mirror_left": np.array(left), "mirror_right": np.array(right), "mirror_sign": np.array(sign),
     }
+    if spec.head_body:
+        info["head_body"] = model.body(spec.head_body).id
     if spec.hip_roll_joints:   # home 자세에서 무게중심 ~ 디딤 쪽 hip_roll 축의 옆 거리 (com_over_stance의 기준)
         data = mujoco.MjData(model)
         data.qpos[:] = info["home_qpos"]
@@ -285,6 +298,9 @@ def spec_from_config(config: dict) -> WalkSpec:
         spec = replace(spec, command_obs=True)
     if config.get("obs_history"):                                                # --obs-history
         spec = replace(spec, obs_history=int(config["obs_history"]))
+    if config.get("double_support_fast") is not None:                            # --double-support-fast
+        spec = replace(spec, double_support_fast=float(config["double_support_fast"]),
+                       fast_speed=float(config.get("fast_speed", spec.fast_speed)))
     return spec
 
 
@@ -302,3 +318,14 @@ def base_observation(spec: WalkSpec, gravity_body, gyro, q_rel, qvel, last_actio
     phase = 2 * np.pi * t / spec.gait_period
     return np.concatenate([gravity_body, gyro, vel_body, [height], q_rel, 0.1 * np.asarray(qvel), last_action,
                            np.atleast_1d(command), [np.sin(phase), np.cos(phase)]]).astype(np.float32)
+
+
+def double_support_width(spec: WalkSpec, speed_x):
+    """gait_phase 보상의 양발 지지 폭 (박자 전환 앞뒤로 한 주기의 몇 배). 앞뒤 명령 속도 |vx|가 target_speed 이하면
+    double_support, fast_speed 이상이면 double_support_fast, 사이는 직선으로. numpy·jax 모두 (abs·min·max만 씀)."""
+    if spec.double_support_fast is None:
+        return spec.double_support
+    frac = (abs(speed_x) - spec.target_speed) / (spec.fast_speed - spec.target_speed)
+    frac = frac * (frac > 0)                       # clip 0~1 (jax 배열에도 되게 연산자로)
+    frac = frac - (frac - 1) * (frac > 1)
+    return spec.double_support + (spec.double_support_fast - spec.double_support) * frac

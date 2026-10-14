@@ -199,6 +199,12 @@ def main():
     parser.add_argument("--cmd-resample", type=float, default=5.0, metavar="S", help="학습 중 명령을 바꾸는 간격 [s]")
     parser.add_argument("--cmd-zero-prob", type=float, default=0.0, metavar="P",
                         help="명령 성분마다 이 확률로 정확히 0 (제자리 돌기·옆으로만·뒤로만 같은 명령을 자주 연습)")
+    parser.add_argument("--double-support-fast", type=float, default=None, metavar="DS",
+                        help="빠른 앞뒤 명령에서 gait_phase 보상의 양발 지지 폭 (기본 0.1 = 한 주기의 40 %%가 양발, 디딤 비율 0.7). "
+                             "명령 |vx|가 목표 속도(오리 0.15) → --fast-speed로 갈수록 이 값으로 줄임 (0.05면 디딤 비율 0.6: "
+                             "서보 속도로 낼 수 있는 최고 속도 0.22~0.28 → 0.34~0.43 m/s, docs/09 §8.5)")
+    parser.add_argument("--fast-speed", type=float, default=0.375, metavar="V",
+                        help="--double-support-fast가 다 적용되는 앞뒤 명령 속도 [m/s]")
     parser.add_argument("--obs-history", type=int, default=0, metavar="H",
                         help="정책 관측에 지난 H 제어 스텝의 관측을 이어 붙임 (지난 움직임에서 실물 차이를 짐작). "
                              "기록 없이 학습한 정책에서 이어 가면 새 입력의 가중치를 0으로 시작 (처음엔 같은 행동)")
@@ -246,6 +252,9 @@ def main():
     if args.obs_history:
         import dataclasses
         spec = dataclasses.replace(spec, obs_history=args.obs_history)
+    if args.double_support_fast is not None:
+        import dataclasses
+        spec = dataclasses.replace(spec, double_support_fast=args.double_support_fast, fast_speed=args.fast_speed)
     commands = None
     if args.cmd_vx or args.cmd_vy or args.cmd_wz:   # 명령 따라 걷기
         import dataclasses
@@ -286,6 +295,7 @@ def main():
         "deployable_obs": args.deployable_obs, "privileged_critic": args.privileged_critic,
         "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None, "obs_history": args.obs_history,
         "command_obs": commands is not None, "commands": commands,
+        "double_support_fast": args.double_support_fast, "fast_speed": args.fast_speed,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -369,11 +379,14 @@ def main():
         writer.add_scalar("walk/servo_over_pct", 100.0 * gait["servo_over"], step)   # 데이터시트 한계 밖 [%]
         writer.add_scalar("walk/track_lin_mps", gait["track_lin"], step)    # 속도 명령과의 차이 (명령 모드가 아니면 목표 속도와)
         writer.add_scalar("walk/track_yaw_rps", gait["track_yaw"], step)    # 회전 명령과의 차이
+        head_sway = float(np.sqrt(gait["head_sway"]))                       # 머리 옆 속도 RMS [m/s]
+        writer.add_scalar("walk/head_sway_mps", head_sway, step)
         writer.flush()
         print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
               f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | 발 들기 {clearance_cm:4.1f} cm | 서보 한계 밖 {100 * gait['servo_over']:4.1f}% | "
               + (f"명령 오차 {gait['track_lin']:.3f} m/s·{gait['track_yaw']:.2f} rad/s | " if commands else "")
+              + (f"머리 흔들림 {head_sway:.2f} m/s | " if spec.head_body else "")
               + f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)

@@ -42,8 +42,8 @@ with contextlib.redirect_stdout(io.StringIO()):
 from ..builder import FREEJOINT_NAME
 from .walk_spec import (CONTROL_DT, COM_SHIFT_TARGET, COMMANDS_DEFAULT, DOMAIN_RAND, FALL_TILT,  # noqa: F401 (다른 모듈이 walk_mjx.이름으로 씀)
                         GAIT_METRICS, OBS_NOISE, PHYSICS_DT, REWARD_WEIGHTS, SERVO_DATASHEET, SERVO_MODELS, SPECS,
-                        WalkSpec, _home_base_height, base_observation, build_mjx_model, mirror_table,
-                        spec_from_config, with_home_knee, with_servo)
+                        WalkSpec, _home_base_height, base_observation, build_mjx_model, double_support_width,
+                        mirror_table, spec_from_config, with_home_knee, with_servo)
 
 
 def tilt_matrix(roll, pitch):
@@ -116,6 +116,7 @@ class BipedWalkMjxEnv(Env):
         self.ref_fwd, self.ref_lift, self.ref_is_right = self._reference_coefficients(info)
         self.hip_roll_joints = jnp.asarray(info["hip_roll_joints"]) if "hip_roll_joints" in info else None
         self.com_hip_nominal = info.get("com_hip_nominal", 0.0)
+        self.head_body = info.get("head_body")
         if terrain is not None:
             self.ground_heights = f32(terrain.heights)
             self.ground_origin = f32([terrain.center[0] - terrain.size_x, terrain.center[1] - terrain.size_y])
@@ -278,12 +279,20 @@ class BipedWalkMjxEnv(Env):
 
         com_shift = self._com_shift(data, yaw, contact)
 
+        # --- 머리 흔들림: 머리의 옆 속도 (몸통 방향 기준). 몸통 속도 + 각속도 × (머리 − 몸통) — 목 관절은 home 유지라 무시.
+        #     (위치 차분은 쓰지 않음: Brax 자동 리셋은 info를 되돌리지 않아 리셋 직후 큰 값이 나옴)
+        cy, sy = jnp.cos(yaw), jnp.sin(yaw)
+        if self.head_body is not None:
+            v_head = vel_world + jnp.cross(rot @ ang_body, data.xpos[self.head_body] - data.xpos[self.base_body])
+            head_lat = -sy * v_head[0] + cy * v_head[1]
+        else:
+            head_lat = jnp.zeros(())
+
         # --- 명령 따라 걷기: 몸통 방향 기준 속도로 명령과 비교 (명령 모드가 아니면 아래 terms의 원래 식 그대로)
         heading_err = yaw
         cmd_terms = {}
         if sp.command_obs:
             c = state.info["command"]
-            cy, sy = jnp.cos(yaw), jnp.sin(yaw)
             v_head = jnp.array([cy * vel_world[0] + sy * vel_world[1], -sy * vel_world[0] + cy * vel_world[1]])
             lin_err2 = jnp.sum(jnp.square(v_head - c[:2]))
             yaw_err = ang_body[2] - c[2]
@@ -303,6 +312,9 @@ class BipedWalkMjxEnv(Env):
                 "yaw_tracking": jnp.exp(-jnp.square(yaw_err) / 0.1),
                 "step_length": (speed > 0.03) * jnp.sum(real_step * jnp.clip(ahead_cmd, -0.2, target) / target),
                 "symmetry": asym * jnp.maximum(0.0, 1.0 - jnp.abs(c[2]) / 0.3),   # 돌 때는 좌우가 다른 게 당연
+                "head_sway": jnp.square(head_lat - c[1]),                        # 옆걸음 명령만큼은 움직여도 됨
+                "gait_phase": self._gait_phase_match(info["time"], contact, sp.gait_period,
+                                                     double_support_width(sp, c[0])),
             }
             track_lin, track_yaw = jnp.sqrt(lin_err2), jnp.abs(yaw_err)
         else:
@@ -321,13 +333,15 @@ class BipedWalkMjxEnv(Env):
             "alive": jnp.ones(()),
             "heading": jnp.square(yaw),
             "flight": jnp.where(contact.any(), 0.0, 1.0),
-            "gait_phase": self._gait_phase_match(info["time"], contact, sp.gait_period),
+            "gait_phase": self._gait_phase_match(info["time"], contact, sp.gait_period,
+                                                 double_support_width(sp, self.target_speed)),
             "symmetry": asym,
             "step_length": step_reward,
             "reference": self._reference_match(q, info["time"]),
             "com_over_stance": jnp.clip(com_shift / COM_SHIFT_TARGET, 0.0, 1.0),
             "foot_clearance": clearance_reward,
             "yaw_tracking": jnp.zeros(()),
+            "head_sway": jnp.square(head_lat),
         }
         terms.update(cmd_terms)
         # 방향: 명령 모드에서는 1 − cos(오차) (최대 2). 제곱이면 돌기 명령을 못 따라갈 때 오차가 180°까지 쌓여 다른 보상을
@@ -365,6 +379,7 @@ class BipedWalkMjxEnv(Env):
             "gait/servo_over": over_frac,                            # 정책 관절이 데이터시트 한계 밖인 비율 (물리 스텝 평균)
             "gait/track_lin": track_lin,                             # 속도 명령과의 차이 [m/s]
             "gait/track_yaw": track_yaw,                             # 회전 명령과의 차이 [rad/s]
+            "gait/head_sway": jnp.square(head_lat),                  # 머리 옆 속도² [m²/s²] (명령 빼지 않음)
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)
@@ -449,11 +464,11 @@ class BipedWalkMjxEnv(Env):
         return jnp.exp(-err / (self.spec.n * 0.15 ** 2))
 
     @staticmethod
-    def _gait_phase_match(t, contact, period):
+    def _gait_phase_match(t, contact, period, ds=0.1):
         """걸음 박자의 앞 절반은 왼발만, 뒤 절반은 오른발만 땅을 딛는 것이 '정답'.
-        박자가 바뀌는 앞뒤 0.1 주기(양발 지지 구간)는 두 발 모두 딛는 것이 정답. 발마다 맞으면 0.5점."""
+        박자가 바뀌는 앞뒤 ds 주기(양발 지지 구간, 기본 0.1)는 두 발 모두 딛는 것이 정답. 발마다 맞으면 0.5점."""
         phase = jnp.mod(t / period, 1.0)
-        double = (phase < 0.1) | ((phase > 0.4) & (phase < 0.6)) | (phase > 0.9)
+        double = (phase < ds) | ((phase > 0.5 - ds) & (phase < 0.5 + ds)) | (phase > 1.0 - ds)
         want_left = (phase < 0.5) | double
         want_right = (phase >= 0.5) | double
         match_left = jnp.where(want_left, contact[0], ~contact[0])

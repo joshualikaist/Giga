@@ -47,10 +47,15 @@ COMMAND_TEST = [("forward 0.05", (0.05, 0.0, 0.0)), ("forward 0.10", (0.10, 0.0,
                 ("turn left in place", (0.0, 0.0, 0.4)), ("turn right in place", (0.0, 0.0, -0.4)),
                 ("step left", (0.0, 0.08, 0.0)), ("step right", (0.0, -0.08, 0.0))]
 COMMAND_TOL = {"lin": 0.03, "yaw": 0.1}
+# 빠르기·뒤로 시험 (명령 점수에는 넣지 않음 — 4차까지의 점수와 비교되게): 5차 자율 학습의 목표인 빠른 걸음과 뒤로 걷기.
+# 앞 0.375 = 4차까지의 최고 명령 0.25의 1.5배 (사용자 목표, docs/10 5차)
+SPEED_TEST = [("forward 0.30", (0.30, 0.0, 0.0)), ("forward 0.35", (0.35, 0.0, 0.0)), ("forward 0.375", (0.375, 0.0, 0.0)),
+              ("backward 0.12", (-0.12, 0.0, 0.0))]
 COMMAND_LABELS = {"forward 0.05": "앞 0.05", "forward 0.10": "앞 0.10", "forward 0.20": "앞 0.20", "forward 0.25": "앞 0.25",
                   "backward 0.08": "뒤 0.08", "turn left walking": "걸으며 왼쪽 돌기", "turn right walking": "걸으며 오른쪽 돌기",
                   "turn left in place": "제자리 왼쪽 돌기", "turn right in place": "제자리 오른쪽 돌기",
-                  "step left": "왼쪽 옆걸음", "step right": "오른쪽 옆걸음"}
+                  "step left": "왼쪽 옆걸음", "step right": "오른쪽 옆걸음",
+                  "forward 0.30": "앞 0.30", "forward 0.35": "앞 0.35", "forward 0.375": "앞 0.375", "backward 0.12": "뒤 0.12"}
 
 
 def command_tracking(rec, steady_s: float = 2.0) -> tuple[np.ndarray, float]:
@@ -65,10 +70,10 @@ def command_tracking(rec, steady_s: float = 2.0) -> tuple[np.ndarray, float]:
     return v_head.mean(axis=0), float(yaw_rate)
 
 
-def command_trials(config, policy, seed=0) -> dict:
-    """COMMAND_TEST의 명령마다 평지 1번 + 섞인 코스 1.0 두 번. {이름: {ok, trials, survived, err_lin, err_yaw}}"""
+def command_trials(config, policy, seed=0, tests=COMMAND_TEST) -> dict:
+    """tests(기본 COMMAND_TEST)의 명령마다 평지 1번 + 섞인 코스 1.0 두 번. {이름: {ok, trials, survived, err_lin, err_yaw}}"""
     out = {}
-    for name, cmd in COMMAND_TEST:
+    for name, cmd in tests:
         rows = []
         for terrain in (None, make_terrain("mixed", seed=seed * 1000 + 1, difficulty=1.0),
                         make_terrain("mixed", seed=seed * 1000 + 2, difficulty=1.0)):
@@ -215,6 +220,10 @@ def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> 
         n_all = sum(c["trials"] for c in result["commands"].values())
         print(f"  [{label}] 명령 시험: {n_ok}/{n_all} 성공 — " + ", ".join(
             f"{COMMAND_LABELS[k]} {c['ok']}/{c['trials']}" for k, c in result["commands"].items()), flush=True)
+        result["speed"] = command_trials(config, policy, args.seed, SPEED_TEST)
+        print(f"  [{label}] 빠르기·뒤로 시험: " + ", ".join(
+            f"{COMMAND_LABELS[k]} {c['ok']}/{c['trials']} (실제 {c['achieved'][0]:+.3f})" for k, c in result["speed"].items()),
+            flush=True)
     runner = make_runner(config)
     result["push"] = {f"{v:g}": int(sum(push_trials(runner, policy, v, PUSH_TEST["interval"], args.episodes, args.seed)))
                       for v in PUSH_TEST["speeds"]}
@@ -319,6 +328,18 @@ def verdict(new: dict, base: dict | None, args, target_speed: float) -> list[str
     return lines
 
 
+def _command_rows(new: dict, base: dict | None, key: str, tests) -> list[str]:
+    """명령 시험 표의 줄들 (기준 → 새 정책)."""
+    rows = []
+    for name, cmd in tests:
+        c, bc = new[key][name], (base or {}).get(key, {}).get(name)
+        rows.append(f"| {COMMAND_LABELS[name]} {cmd} | " + " | ".join(
+            _cell(bc[k] if bc else None, c[k], fmt) for k, fmt in (("ok", "{}"), ("survived", "{}"),
+                                                                 ("err_lin", "{:.3f}"), ("err_yaw", "{:.2f}")))
+                    + " | " + ("(" + ", ".join(f"{x:+.2f}" for x in c["achieved"]) + ")" if "achieved" in c else "") + " |")
+    return rows
+
+
 def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, base: dict | None,
               config: dict, base_config: dict | None, args, spec, champion_lines=()) -> str:
     target = config.get("target_speed", spec.target_speed)
@@ -375,6 +396,7 @@ def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, ba
             ("절뚝임 점수 [%]", lambda m: m["limp_score_pct"], "{:.1f}"),
             ("좌우 다리 동작 차이 [°]", lambda m: m["leg_asymmetry_deg"], "{:.1f}"),
             ("몸통 roll 범위 [°]", lambda m: m["body_roll_range_deg"], "{:.0f}"),
+            ("머리 좌우 흔들림 [cm]", lambda m: "—" if m.get("head_sway_cm") is None else f"{m['head_sway_cm']:.1f}", "{}"),
             ("방향 틀어짐 [°] / 옆으로 [m]", lambda m: f"{m['yaw_deg']:+.0f} / {m['drift_y_m']:+.2f}", "{}"),
             ("평균 무릎 각도 [°]", lambda m: m["knee_mean_deg"], "{:.0f}")]
     md += ["", "## 3. 평지 걸음 (10초)", "", "| | " + ("기준 | 새 정책 |" if base else "새 정책 |"),
@@ -385,12 +407,12 @@ def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, ba
         md += ["", "## 4. 명령 따라 걷기 (명령마다 3번: 평지 1 + 섞인 코스 1.0 2, 성공 / 평균 오차" + (", 기준 → 새 정책)" if base else ")"), "",
                "| 명령 (vx, vy, wz) | 성공 | 넘어지지 않음 | 속도 오차 [m/s] | 회전 오차 [rad/s] | 실제 (vx, vy, wz) |",
                "|---|---|---|---|---|---|"]
-        for name, cmd in COMMAND_TEST:
-            c, bc = new["commands"][name], (base or {}).get("commands", {}).get(name)
-            md.append(f"| {COMMAND_LABELS[name]} {cmd} | " + " | ".join(
-                _cell(bc[k] if bc else None, c[k], fmt) for k, fmt in (("ok", "{}"), ("survived", "{}"),
-                                                                     ("err_lin", "{:.3f}"), ("err_yaw", "{:.2f}")))
-                      + " | " + ("(" + ", ".join(f"{x:+.2f}" for x in c["achieved"]) + ")" if "achieved" in c else "") + " |")
+        md += _command_rows(new, base, "commands", COMMAND_TEST)
+    if new.get("speed"):
+        md += ["", "## 5. 빠르기·뒤로 시험 (명령 점수에는 안 들어감. 5차 목표: 앞 0.375 = 지금까지 최고 명령 0.25의 1.5배)", "",
+               "| 명령 (vx, vy, wz) | 성공 | 넘어지지 않음 | 속도 오차 [m/s] | 회전 오차 [rad/s] | 실제 (vx, vy, wz) |",
+               "|---|---|---|---|---|---|"]
+        md += _command_rows(new, base, "speed", SPEED_TEST)
     md += ["", "![연속 사진](filmstrip.png)", "", "![걸음 그래프](gait.png)"]
     if new["torque"]:
         md += ["", "![토크-속도](torque_speed.png)"]
