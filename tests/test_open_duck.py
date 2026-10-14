@@ -8,6 +8,7 @@ import pytest
 
 from biped_sim import OPEN_DUCK_MINI as CFG
 from biped_sim import JointPDController, RobotInterface, build_robot_model
+from biped_sim import paths
 from biped_sim.utils import lowest_collision_z
 
 pytestmark = pytest.mark.skipif(not CFG.urdf.exists(), reason="Open Duck Mini 파일 없음 → bash scripts/get_open_duck.sh")
@@ -70,3 +71,34 @@ def test_stands_with_joint_pd(floating):
     assert np.degrees(robot.base_tilt()) < 10
     load = sum(robot.contact_normal_force(b) for b in CFG.foot_bodies)
     assert load == pytest.approx(robot.total_mass * 9.81, rel=0.02)
+
+
+def test_walk_spec_and_numpy_policy_run_without_jax():
+    """ROS용 .venv(jax 없음)에서: 학습과 같은 오리 모델(walk_spec)과 numpy 정책(biped_sim.policy)으로 관측 → 행동.
+    IMU 자세에서 계산한 중력 방향이 MuJoCo 회전 행렬로 계산한 것과 같다 (ROS2 policy_node, docs/11)."""
+    import sys
+
+    from biped_sim.envs import walk_spec
+    from biped_sim.policy import NumpyPolicy
+
+    policy = NumpyPolicy.load(paths.REPO_ROOT / "learning" / "pretrained" / "duck_cmd_policy.npz")
+    spec = walk_spec.spec_from_config(policy.config)
+    model, info = walk_spec.build_mjx_model(spec)
+    assert "jax" not in sys.modules
+    assert model.opt.timestep == walk_spec.PHYSICS_DT and spec.obs_size == 180
+    assert info["kp"][0] == pytest.approx(13.37) and info["tau_limit"][0, 1] == pytest.approx(3.23)   # 실측 서보 모델
+
+    data = mujoco.MjData(model)
+    data.qpos[:] = info["home_qpos"]
+    data.qpos[3:7] = [0.97, 0.1, -0.15, 0.12]           # 기울인 몸통 (w, x, y, z)
+    data.qpos[3:7] /= np.linalg.norm(data.qpos[3:7])
+    mujoco.mj_forward(model, data)
+    w, x, y, z = data.qpos[3:7]
+    pn = pytest.importorskip("giga_sim_ros.policy_node", reason="ros2_ws 미빌드")
+    rot = data.xmat[info["base_body"]].reshape(3, 3)
+    assert np.allclose(pn.gravity_in_body((x, y, z, w)), rot.T @ [0, 0, -1.0], atol=1e-9)
+
+    base = walk_spec.base_observation(spec, rot.T @ [0, 0, -1.0], np.zeros(3), np.zeros(spec.n), np.zeros(spec.n),
+                                      np.zeros(spec.n), np.array([0.15, 0.0, 0.0]), 0.0)
+    action = policy(np.concatenate([base] * (1 + spec.obs_history)))
+    assert action.shape == (spec.n,) and np.all(np.abs(action) <= 1)

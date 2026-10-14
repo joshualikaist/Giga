@@ -456,6 +456,21 @@ def test_pretrained_duck_cmd_policy_follows_commands():
         assert abs(w - cmd[2]) <= COMMAND_TOL["yaw"], (cmd, w)
 
 
+def test_numpy_policy_matches_brax():
+    """learning/export_policy.py로 바꾼 numpy 정책(.npz, ROS2 policy_node가 씀)이 Brax 정책과 같은 행동을 낸다."""
+    from walk_tools import load_policy
+
+    from biped_sim.policy import NumpyPolicy
+
+    brax_policy, config = load_policy(LEARNING_DIR / "pretrained" / "duck_cmd_policy.pkl")
+    numpy_policy = NumpyPolicy.load(LEARNING_DIR / "pretrained" / "duck_cmd_policy.npz")
+    assert numpy_policy.config["obs_history"] == config["obs_history"]
+    rng = np.random.default_rng(1)
+    for _ in range(20):
+        obs = (numpy_policy.mean + numpy_policy.std * rng.normal(size=numpy_policy.mean.shape)).astype(np.float32)
+        assert np.allclose(numpy_policy(obs), brax_policy(obs), atol=1e-5)
+
+
 def test_terrain_env_measures_height_from_local_ground():
     """지형 위 학습 환경: GPU 쪽 땅 높이 계산(ground)이 terrain.height_at과 같고, 무작위 출발 위치에서
     몸통이 그 자리 땅 위 기준 높이에 놓인다 (관측의 높이 오차가 작다)."""

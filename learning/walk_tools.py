@@ -10,7 +10,6 @@ play_walk.py(화면), analyze_gait.py(영상·그래프 분석), 테스트가 �
 """
 from __future__ import annotations
 
-import dataclasses
 import functools
 import json
 import os
@@ -38,20 +37,8 @@ TAP_HEIGHT = 0.015       # [m] 발을 이보다 낮게 들었다 다시 닿으�
 
 # ---------------------------------------------------------------------------- 정책
 def get_spec(config: dict) -> walk_mjx.WalkSpec:
-    """학습 설정의 로봇 보행 과제 (예전 학습은 robot 항목이 없음 = simple_biped, servo 항목이 없음 = ideal,
-    home_knee 항목이 없음 = 로봇 설정의 서 있는 자세)."""
-    spec = walk_mjx.with_servo(walk_mjx.SPECS[config.get("robot", "simple_biped")], config.get("servo", "ideal"))
-    if config.get("home_knee") is not None:
-        spec = walk_mjx.with_home_knee(spec, config["home_knee"])
-    if config.get("gait_period") and config["gait_period"] != spec.gait_period:   # --gait-period로 바꾼 걸음 박자
-        spec = dataclasses.replace(spec, gait_period=config["gait_period"])
-    if config.get("deployable_obs"):                                             # --deployable-obs
-        spec = dataclasses.replace(spec, deployable_obs=True)
-    if config.get("command_obs"):                                                # --cmd-* (명령 따라 걷기)
-        spec = dataclasses.replace(spec, command_obs=True)
-    if config.get("obs_history"):                                                # --obs-history
-        spec = dataclasses.replace(spec, obs_history=int(config["obs_history"]))
-    return spec
+    """학습 설정의 로봇 보행 과제 (= walk_spec.spec_from_config, ROS2 policy_node와 같은 함수)."""
+    return walk_mjx.spec_from_config(config)
 
 
 @functools.lru_cache(maxsize=4)
@@ -179,16 +166,12 @@ class MujocoRunner:
     def _base_obs(self) -> np.ndarray:
         d, i = self.data, self.info
         rot = d.xmat[i["base_body"]].reshape(3, 3)
-        phase = 2 * np.pi * self.t / self.spec.gait_period
-        vel = rot.T @ d.qvel[0:3]
         height = d.xpos[i["base_body"], 2] - self.ground(*d.xpos[i["base_body"], :2]) - self.spec.nominal_height
-        if self.spec.deployable_obs:   # 실물에서 잴 수 없는 몸통 속도·높이는 0 (walk_mjx._observation과 같게)
-            vel, height = np.zeros(3), 0.0
-        return np.concatenate([self.imu_rot @ (rot.T @ [0, 0, -1.0]), self.imu_rot @ d.qvel[3:6], vel, [height],
-                               d.qpos[i["qpos_idx"]] - i["q_home"] - self.joint_offset, 0.1 * d.qvel[i["qvel_idx"]],
-                               self.last_action, self.command if self.spec.command_obs else [self.target_speed],
-                               [np.sin(phase), np.cos(phase)]]
-                              ).astype(np.float32)
+        return walk_mjx.base_observation(   # 실물에서 잴 수 없는 몸통 속도·높이는 deployable_obs면 0
+            self.spec, self.imu_rot @ (rot.T @ [0, 0, -1.0]), self.imu_rot @ d.qvel[3:6],
+            d.qpos[i["qpos_idx"]] - i["q_home"] - self.joint_offset, d.qvel[i["qvel_idx"]], self.last_action,
+            self.command if self.spec.command_obs else self.target_speed, self.t,
+            vel_body=rot.T @ d.qvel[0:3], height=height)
 
 
     def ground(self, x, y):

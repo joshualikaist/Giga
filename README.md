@@ -34,6 +34,7 @@
 | 14 | **실물 기준 점검**: 서보 토크·속도 한계를 계산하고 맞추기 | 실물 서보가 감당할 수 있는 걸음으로 |
 | 15 | **자동 평가와 자율 학습**: 학습 → 평가 → 다음 실험을 자동으로 | 가장 잘 걷는 정책(챔피언)이 계속 갱신됨 |
 | 16 | **명령 따라 걷기**: 방향키로 앞뒤·옆·돌기 조종 | 오리가 키보드 명령대로 걷고 돎 |
+| 17 | **ROS2로 정책 돌리기 (sim-to-sim)**: 센서 토픽 → 정책 노드 → 관절 명령 | 실물과 같은 구조로 오리를 조종 |
 
 ### 어디서부터 시작할까
 
@@ -44,6 +45,7 @@
 | 강화학습을 맛본다 | 위 (GPU 없어도 됨) | 0 → 5, 9 |
 | 로봇이 걷기를 배우게 한다 | **NVIDIA GPU** | 0 → 5, 10 |
 | 오리 로봇·지형·실물 기준·명령 조종까지 | NVIDIA GPU + 인터넷 (로봇 파일 19 MB) | 0 → 5, 10 → 16 |
+| 학습한 오리를 ROS2로 조종 (GPU 없이도) | 위 + ROS2 (2단계) + 오리 로봇 파일 (11단계) | 0 → 7, 11, 17 |
 
 처음이면 위에서부터 순서대로 하세요. 각 단계 끝의 **"✅ 확인"** 과 같은 결과가 나오면 다음으로 넘어가면 됩니다.
 
@@ -200,9 +202,9 @@ python -m pytest
 창 없이 약 1분 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 (`pytest`만 치면 "명령을 찾을 수 없음"이 나올 수 있습니다: 시스템에 이미 깔린 pytest를 쓰느라 `pytest` 명령이 따로 안 생겨서. `python -m pytest`는 항상 됩니다.)
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 28 skipped`).
-`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(18개, 그 환경에서
-`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(5개). 설치하면 그만큼 `passed`로 바뀝니다.
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 31 skipped`).
+`skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(19개, 그 환경에서
+`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(7개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ---
 
@@ -468,6 +470,35 @@ python learning/play_walk.py --view --params learning/pretrained/duck_cmd_policy
 명령 시험(명령 11가지 × 3번, **명령 점수**)은 15단계의 자동 평가에 함께 들어 있습니다. 바꾼 것·결과·실물 주의점 →
 **[docs/09 §10](docs/09_open_source_robot.md)**, 실험 기록 → [docs/10 §9](docs/10_auto_research.md)
 
+### 17단계. ROS2로 정책 돌리기 — 실물과 같은 구조로 조종 (sim-to-sim)
+
+16단계는 정책을 파이썬에서 직접 불렀습니다. 실물 로봇에서는 센서 → 정책 → 서보가 **ROS2 토픽**으로 오갑니다.
+같은 구조로 MuJoCo 오리를 조종해, 학습과 다른 시뮬레이터 + 메시지 지연에서도 걷는지 확인합니다 (GPU 없어도 됨).
+
+```bash
+bash scripts/build_ros.sh && source scripts/activate.sh          # 새 노드(policy_node)를 위해 다시 빌드
+ros2 launch giga_sim_ros duck.launch.py cmd_timeout:=0           # 오리 + 정책 (terrain:=mixed 이면 험지)
+```
+
+다른 터미널에서 키보드로 조종 (`i` 앞, `,` 뒤, `j`/`l` 돌기, `Shift`+`J`/`L` 옆걸음, `k` 멈춤):
+
+```bash
+source scripts/activate.sh
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.1 -p turn:=0.3
+```
+
+✅ 확인: 키를 누르면 MuJoCo 창의 오리가 그쪽으로 걸으면 성공. 넘어지면 1초 뒤 처음 자리로 돌아옵니다.
+
+```mermaid
+flowchart LR
+  K["조종기"] -- "/cmd_vel" --> P["policy_node<br/>(정책, 50 Hz)"]
+  P -- "/joint_commands" --> S["sim_node<br/>(MuJoCo 오리 + 서보)"]
+  S -- "/imu/data, /joint_states" --> P
+```
+
+명령 11가지를 ROS로 시험해도 모두 성공했습니다 (ROS 없이 돌릴 때와 속도 차이 0.01 m/s 안). 구조·결과·다음 계획
+(핸드폰 조이스틱, 직접 만드는 험지, 조종 기록으로 다시 학습) → **[docs/11](docs/11_ros_duck_teleop.md)**
+
 ---
 
 ### 막혔을 때
@@ -497,6 +528,7 @@ python learning/play_walk.py --view --params learning/pretrained/duck_cmd_policy
 | [docs/08_gpu_walking.md](docs/08_gpu_walking.md) | GPU 보행 학습: MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기, 자동 평가 |
 | [docs/09_open_source_robot.md](docs/09_open_source_robot.md) | 오픈소스 오리 로봇: 불러오기, 걷기, 지형, 실물 기준 점검(동역학 한계·서보), 실험 기록 |
 | [docs/10_auto_research.md](docs/10_auto_research.md) | 자율 학습: 보행 점수·챔피언, 판단 규칙, 실험 기록과 배운 것 |
+| [docs/11_ros_duck_teleop.md](docs/11_ros_duck_teleop.md) | 학습한 오리를 ROS2로 조종 (sim-to-sim): 정책 노드, 조종, 결과 |
 | [docs/00_roadmap.md](docs/00_roadmap.md) | 전체 계획과 현재 위치 |
 | [docs/02](docs/02_mujoco_concepts.md) · [03](docs/03_urdf_and_mujoco.md) · [04](docs/04_simple_biped_spec.md) | MuJoCo 개념, URDF 변환 규칙, 로봇 사양 |
 
@@ -512,8 +544,9 @@ python learning/play_walk.py --view --params learning/pretrained/duck_cmd_policy
   (무작위화 전 3번), 관절 영점·IMU 조립 오차 + 20 ms 지연에서 9번 (`output/learning/champion_open_duck_mini_deployable.json`).
 - **오리 로봇 챔피언** (시뮬레이션 전용): 험한 지형 160번 중 144번 버팀, 0.4 m/s 밀기 10번 모두 버팀, 서보 데이터시트 한계 밖 0 %
   (`output/learning/champion_open_duck_mini.json`). 시뮬레이션에만 있는 센서 값(몸통 속도·높이)을 써서 실물에는 못 올립니다.
-- **다음**: 시뮬레이션 지표가 거의 천장이라, 정책을 실물 오리의 제어 프로그램(라즈베리 파이)에서 돌릴 수 있게 내보내기
-  ([docs/10 §9 4차 정리](docs/10_auto_research.md)). 실물에서는 hip_roll 서보 부하(정격의 1.5배)와 온도를 꼭 확인.
+- **ROS2로 조종** (17단계): 학습한 정책을 센서 토픽 → 정책 노드 → 관절 명령으로 돌려도 명령 11가지 모두 성공 (sim-to-sim).
+- **다음**: 핸드폰 조이스틱, 직접 만드는 험지, 조종 기록으로 다시 학습 ([docs/11](docs/11_ros_duck_teleop.md)).
+  실물에서는 hip_roll 서보 부하(정격의 1.5배)와 온도를 꼭 확인.
 - **가장 효과가 컸던 것**: 시험만큼 험한 지형에서 연습하기 (보행 점수 77.5 → 86.9), 서보 한계 초과 감점 (한계 밖 5.6 → 0.1 %),
   명령 범위를 시험값보다 넓게 잡기 (명령 점수 48.5 → 78.8).
 
@@ -552,6 +585,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── 08_gpu_walking.md         ← GPU 보행 학습: MuJoCo MJX + Brax PPO, 보상 설계, 걸음 분석·다듬기, 자동 평가
 │   ├── 09_open_source_robot.md   ← 오픈소스 로봇(오리): 불러오기, 걷기, 지형, 동역학 한계, 실물 기준 학습 기록
 │   ├── 10_auto_research.md       ← 자율 학습 규칙과 실험 기록 (보행 점수, 챔피언)
+│   ├── 11_ros_duck_teleop.md     ← 학습한 오리를 ROS2로 조종 (sim-to-sim)
 │   └── images/                   ← 문서의 "이렇게 보이면 성공" 그림
 │
 ├── models/                       ── 로봇/장면 모델 (원본)
@@ -570,9 +604,11 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── runner.py                 ← simulate() 루프 (뷰어/헤드리스), passive_viewer(안전한 뷰어 종료), 스냅샷, 카메라
 │   ├── utils.py                  ← 쿼터니언 변환(MuJoCo↔ROS), 지면 높이 계산
 │   ├── terrain.py                ← 울퉁불퉁한 지형(높이맵): 언덕·불규칙한 경사로·장애물·학습용 넓은 지형
+│   ├── policy.py                 ← numpy만으로 학습한 정책 돌리기 (ROS2 policy_node, 실물 보드)
 │   └── envs/                     ← 강화학습 환경
 │       ├── balance.py            ←   밀기 버티기 (Gymnasium, CPU) + 평가 함수
-│       └── walk_mjx.py           ←   보행 (Brax, GPU MJX): 보상, 서보 모델, 마찰·밀기 무작위, 실물 관측 — .venv-mjx에서만
+│       ├── walk_spec.py          ←   보행 과제 설정·서보 모델·학습과 같은 모델·관측 계산 (jax 없이: ROS2 노드도 씀)
+│       └── walk_mjx.py           ←   보행 (Brax, GPU MJX): 보상, 마찰·밀기·실물 오차 무작위 — .venv-mjx에서만
 │
 ├── tutorials/                    ── 학생용 실습 (순서대로)
 │   ├── README.md                 ← 각 튜토리얼의 관찰 포인트 + 과제
@@ -589,6 +625,7 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── test_tutorials_and_ros.py ← 튜토리얼 실행 + ROS2 robot_state_publisher URDF 파싱
 │   ├── test_ros_sim_node.py      ← sim_node 통합: 주기, 명령, 초기화, IMU·TF, 정상 종료
 │   ├── test_ros_launch.py        ← launch 통합: 앉았다 일어서기, 제어기 사망 시 감쇠 모드
+│   ├── test_ros_duck.py          ← 오리 + 학습한 정책을 ROS2로: /cmd_vel대로 걷기, /policy/reset (파일 있을 때만)
 │   ├── test_learning.py          ← 학습 환경 규격, 기준선, 미리 학습된 모델 성능, 학습 스크립트
 │   ├── test_open_duck.py         ← 오리 로봇: 빌더 보완, 바닥 1 mm 위 시작, 좌우 부호, 서 있기 (파일 있을 때만)
 │   ├── test_terrain.py           ← 지형 높이 = MuJoCo 실제 표면(광선으로 확인), 바꿔 끼우기, 출발 자리
@@ -606,9 +643,10 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │   ├── terrain_trial.py          ← 울퉁불퉁한 지형 실험: MuJoCo 화면에서 에피소드마다 새 지형 (--headless는 통계)
 │   ├── feasibility.py            ← 동역학 한계 계산(토크·턱·경사·속도·흔들림)과 학습한 걸음의 측정 비교 (docs/09 §8)
 │   ├── evaluate_walk.py          ← 학습 뒤 자동 평가: 지형·밀기·서보·걸음, 보행 점수와 챔피언 (docs/08 §4.1, docs/10)
+│   ├── export_policy.py          ← Brax 정책(.pkl) → numpy 정책(.npz): jax 없이 돌리기 (docs/11)
 │   └── pretrained/               ← 미리 학습된 모델: balance_ppo.zip (밀기 버티기),
 │                                    walk_policy.pkl/.json (다듬은 걸음, docs/08 §6)
-│                                    duck_cmd_policy.pkl/.json (오리 명령 따라 걷기, docs/09 §10)
+│                                    duck_cmd_policy.pkl/.npz/.json (오리 명령 따라 걷기, docs/09 §10, .npz는 ROS2용)
 │
 ├── ros2_ws/                      ── ROS2 colcon 워크스페이스 (build/ install/ log/는 git 제외)
 │   └── src/
@@ -619,8 +657,10 @@ Giga/                             (clone한 폴더 이름. 로컬에서 다른 �
 │       └── giga_sim_ros/         ← ament_python: 시뮬레이터 ROS 어댑터
 │           ├── giga_sim_ros/sim_node.py         ← MuJoCo를 감싼 ROS2 노드 = "가짜 로봇 하드웨어"
 │           ├── giga_sim_ros/demo_controller.py  ← 토픽만으로 로봇 조종 (stand / squat)
+│           ├── giga_sim_ros/policy_node.py      ← 학습한 보행 정책: IMU·관절 + /cmd_vel → 관절 목표 50 Hz
 │           ├── giga_sim_ros/shutdown.py         ← Ctrl+C·SIGTERM 안전 종료 처리
 │           ├── launch/sim.launch.py             ← sim_node + robot_state_publisher + RViz + 제어기
+│           ├── launch/duck.launch.py            ← 오리(sim_node) + policy_node (docs/11)
 │           └── package.xml, setup.py, setup.cfg, resource/
 │
 ├── output/                       ── 생성물 (git 제외): 학습 결과, 평가 보고서, 그래프, 스냅샷
@@ -669,5 +709,6 @@ flowchart TD
 | 오리 서보는 데이터시트 기준 정지 토크 1.91 N·m인데 시뮬레이션 기본값은 3.23 N·m, 속도에 따른 감소도 없었다 | [docs/09 §8](docs/09_open_source_robot.md) |
 | 보상을 더하는 것보다 **시험만큼 험한 곳에서 연습**하는 것이 효과가 가장 컸다 (보행 점수 77.5 → 86.9) | [docs/10 §6](docs/10_auto_research.md) |
 | 시뮬레이션에서만 아는 센서 값(몸통 속도·높이)을 가리면 잘 걷던 정책이 거의 멈춘다 (0.15 → 0.03 m/s) | [docs/09 §9.13](docs/09_open_source_robot.md) |
+| ROS 타이머는 놓친 호출을 따라잡지 않는다: 화면 갱신이 5 ms씩 기다리면 시뮬레이션이 실제 시간의 0.7배로 느려짐 → 지난 시간만큼 물리 스텝 | [docs/11 §4](docs/11_ros_duck_teleop.md) |
 
 </details>
