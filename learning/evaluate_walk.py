@@ -29,7 +29,7 @@ from biped_sim.terrain import KINDS, make_terrain
 
 GROUPS = ("hip_roll", "hip_pitch", "knee", "ankle", "hip_yaw")   # 토크 표의 관절 순서 (오리)
 # 기본 시험 조건. 이 조건으로 평가했을 때만 챔피언(지금까지 가장 잘 걷는 정책)과 비교·갱신한다 (점수를 견줄 수 있게)
-DEFAULTS = dict(episodes=10, difficulties=[1.5, 2.0], frictions=[1.0, 0.5], kinds=list(KINDS), seed=0)
+DEFAULTS = dict(episodes=10, difficulties=[1.5, 2.0], frictions=[1.0, 0.5], kinds=list(KINDS), seed=0, command_trials=10)
 CHAMPION_DIR = Path(__file__).resolve().parents[1] / "output" / "learning"
 PUSH_TEST = dict(speeds=(0.3, 0.4), interval=2.0)   # 밀기 시험: 평지에서 2초마다 몸통을 무작위 방향으로 툭 (보행 점수와 별도)
 # 모델 오차 시험: 로봇을 일부러 시뮬레이션과 다르게 해서 섞인 코스(험한 정도 1.5)를 걸림 (실물과의 차이 대비, 보행 점수와 별도)
@@ -70,13 +70,14 @@ def command_tracking(rec, steady_s: float = 2.0) -> tuple[np.ndarray, float]:
     return v_head.mean(axis=0), float(yaw_rate)
 
 
-def command_trials(config, policy, seed=0, tests=COMMAND_TEST) -> dict:
-    """tests(기본 COMMAND_TEST)의 명령마다 평지 1번 + 섞인 코스 1.0 두 번. {이름: {ok, trials, survived, err_lin, err_yaw}}"""
+def command_trials(config, policy, seed=0, tests=COMMAND_TEST, trials: int = 3) -> dict:
+    """tests(기본 COMMAND_TEST)의 명령마다 평지 1번 + 섞인 코스 1.0 (trials − 1)번 (기본 3번).
+    {이름: {ok, trials, survived, err_lin, err_yaw}}. 33번(3번 × 11)은 90 % 위에서 2σ ≈ 3~5번이라 차이를 가리려면 --command-trials 10"""
     out = {}
+    terrains = [None] + [make_terrain("mixed", seed=seed * 1000 + k, difficulty=1.0) for k in range(1, trials)]
     for name, cmd in tests:
         rows = []
-        for terrain in (None, make_terrain("mixed", seed=seed * 1000 + 1, difficulty=1.0),
-                        make_terrain("mixed", seed=seed * 1000 + 2, difficulty=1.0)):
+        for terrain in terrains:
             runner = make_runner(config, terrain=terrain)
             runner.command = np.array(cmd)
             rec = run_episode(runner, policy)
@@ -215,12 +216,12 @@ def evaluate(policy, config, args, out: Path | None = None, label: str = "") -> 
                   + ", ".join(f"{k} {n}/{args.episodes}" for k, n in result["terrain"][cond].items()), flush=True)
 
     if spec.command_obs or args.commands:   # 명령 시험 (명령을 안 받는 예전 정책도 비교용으로 걸려 봄: 늘 0.15로 직진)
-        result["commands"] = command_trials(config, policy, args.seed)
+        result["commands"] = command_trials(config, policy, args.seed, trials=args.command_trials)
         n_ok = sum(c["ok"] for c in result["commands"].values())
         n_all = sum(c["trials"] for c in result["commands"].values())
         print(f"  [{label}] 명령 시험: {n_ok}/{n_all} 성공 — " + ", ".join(
             f"{COMMAND_LABELS[k]} {c['ok']}/{c['trials']}" for k, c in result["commands"].items()), flush=True)
-        result["speed"] = command_trials(config, policy, args.seed, SPEED_TEST)
+        result["speed"] = command_trials(config, policy, args.seed, SPEED_TEST, trials=args.command_trials)
         print(f"  [{label}] 빠르기·뒤로 시험: " + ", ".join(
             f"{COMMAND_LABELS[k]} {c['ok']}/{c['trials']} (실제 {c['achieved'][0]:+.3f})" for k, c in result["speed"].items()),
             flush=True)
@@ -404,7 +405,8 @@ def report_md(run: str, step, params: Path, baseline: Path | None, new: dict, ba
     for name, f, fmt in rows:
         md.append(f"| {name} | " + (f"{fmt.format(gv(bg, f))} | " if base else "") + f"{fmt.format(gv(g, f))} |")
     if new.get("commands"):
-        md += ["", "## 4. 명령 따라 걷기 (명령마다 3번: 평지 1 + 섞인 코스 1.0 2, 성공 / 평균 오차" + (", 기준 → 새 정책)" if base else ")"), "",
+        md += ["", f"## 4. 명령 따라 걷기 (명령마다 {args.command_trials}번: 평지 1 + 섞인 코스 1.0 {args.command_trials - 1}, 성공 / 평균 오차"
+               + (", 기준 → 새 정책)" if base else ")"), "",
                "| 명령 (vx, vy, wz) | 성공 | 넘어지지 않음 | 속도 오차 [m/s] | 회전 오차 [rad/s] | 실제 (vx, vy, wz) |",
                "|---|---|---|---|---|---|"]
         md += _command_rows(new, base, "commands", COMMAND_TEST)
@@ -433,6 +435,9 @@ def main():
     parser.add_argument("--seed", type=int, default=0, help="지형 시드 (같으면 같은 지형)")
     parser.add_argument("--quick", action="store_true", help="빠르게: 3번씩, 험한 정도 1.5, 마찰 1.0만")
     parser.add_argument("--commands", action="store_true", help="명령 시험도 (명령 따라 걷기 정책이면 저절로)")
+    parser.add_argument("--command-trials", type=int, default=10, metavar="N",
+                        help="명령 시험·빠르기 시험의 명령마다 시도 수 (평지 1 + 섞인 코스 N−1, 기본 10 — 6차부터. 5차까지는 3번이었는데 "
+                             "33번은 90 %% 위에서 2σ ≈ 3~5번이라 차이를 못 가렸음). 기본이 아니면 챔피언을 바꾸지 않음"),
     parser.add_argument("--no-video", action="store_true", help="연속 사진·영상 없이 (화면 렌더링이 없는 환경·테스트용)")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -479,7 +484,7 @@ def main():
                 score["passed"] = False
                 score["problems"].append(f"보행 점수가 실물 관측 챔피언({dep['score']:.1f})보다 우연 이상 낮음")
         score = {**score, "score": 100.0 * n_ok / n_all, "score_trials": n_all, "walk_score": walk}
-        lines.insert(0, f"**명령 점수 {score['score']:.1f}** (명령 {len(COMMAND_TEST)}가지 × 3번 = {n_all}번 중, 10초 버티며 "
+        lines.insert(0, f"**명령 점수 {score['score']:.1f}** (명령 {len(COMMAND_TEST)}가지 × {args.command_trials}번 = {n_all}번 중, 10초 버티며 "
                         f"속도 ±{COMMAND_TOL['lin']} m/s·회전 ±{COMMAND_TOL['yaw']} rad/s 안) — "
                         + ("합격" if score["passed"] else "불합격: " + ", ".join(score["problems"])))
     if base is not None:

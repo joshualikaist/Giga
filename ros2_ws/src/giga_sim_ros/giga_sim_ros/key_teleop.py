@@ -33,7 +33,7 @@ ESCAPES = {b'\x1b[A': 'up', b'\x1b[B': 'down', b'\x1b[C': 'right', b'\x1b[D': 'l
            b'\x1b[5~': 'pageup', b'\x1b[6~': 'pagedown', b'\x1b[H': 'home', b'\x1b[1~': 'home', b'\x1bOH': 'home',
            b'\x1bOA': 'up', b'\x1bOB': 'down', b'\x1bOC': 'right', b'\x1bOD': 'left'}
 DEFAULT = (0.15, 0.0, 0.0)
-LIMITS = ((-0.10, 0.25), (-0.15, 0.15), (-0.5, 0.5))   # 오리 명령 정책의 학습 범위 (policy_node도 이 범위로 자름)
+LIMITS = ((-0.20, 0.40), (-0.15, 0.15), (-0.5, 0.5))   # 오리 명령 정책(5차 R4)의 학습 범위 (policy_node도 정책의 범위로 자름)
 
 
 def parse_keys(buf: bytes) -> list[str]:

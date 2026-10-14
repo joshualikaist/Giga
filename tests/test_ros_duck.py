@@ -149,7 +149,7 @@ def test_key_teleop_parses_arrows_and_warns_on_hangul():
     assert cmd == [0.1, 0.04, 0.1]
     for _ in range(10):
         cmd = kt.apply_key(cmd, "up")
-    assert cmd[0] == 0.25                                   # 학습 범위에서 멈춤
+    assert cmd[0] == 0.40                                   # 학습 범위에서 멈춤
     assert kt.apply_key(cmd, "stop") == [0.0, 0.0, 0.0]
     assert kt.apply_key(cmd, "home") == [0.15, 0.0, 0.0]
 
@@ -225,7 +225,7 @@ def test_phone_joystick_drives_duck_over_http(driver):
                 page = urllib.request.urlopen(url, timeout=2).read().decode()
             except OSError:
                 driver.executor.spin_once(timeout_sec=0.2)
-        assert page and "오리 조이스틱" in page and '"vx_max": 0.25' in page and '"vx_min": -0.1' in page
+        assert page and "오리 조이스틱" in page and '"vx_max": 0.4' in page and '"vx_min": -0.2' in page
         x0 = driver.base[-1][0]
         end = time.time() + 5
         while time.time() < end:                         # 핸드폰처럼 초당 약 15번

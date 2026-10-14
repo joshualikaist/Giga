@@ -12,7 +12,7 @@
   "gait_period": 0.6,
   "action_scale": 0.3,
   "reward_weights": {
-    "forward_velocity": 6.0,
+    "forward_velocity": 8.0,
     "lateral_velocity": -1.0,
     "yaw_rate": -0.5,
     "upright": -2.0,
@@ -29,8 +29,9 @@
     "reference": 0.0,
     "com_over_stance": 1.0,
     "servo_overload": -1.0,
-    "yaw_tracking": 2.0,
-    "foot_clearance": 2.0
+    "yaw_tracking": 4.0,
+    "foot_clearance": 2.0,
+    "head_sway": -3.0
   },
   "servo": "open_duck",
   "friction_range": [
@@ -56,8 +57,8 @@
   "command_obs": true,
   "commands": {
     "vx": [
-      -0.1,
-      0.25
+      -0.2,
+      0.4
     ],
     "vy": [
       -0.15,
@@ -70,6 +71,8 @@
     "resample": 5.0,
     "zero_prob": 0.35
   },
+  "double_support_fast": 0.03,
+  "fast_speed": 0.375,
   "terrain": {
     "kind": "training",
     "seed": 0,
@@ -93,9 +96,9 @@
   "saved_step": 22118400,
   "finished": true,
   "history": [
-    "Open Duck Mini v2 명령 따라 걷기 정책 (4차 자율 학습 C6, 261014_005355_duck_cmd_track6). 실물 센서만 사용 (--deployable-obs), 관측 기록 3스텝",
-    "시작: 실물 관측 챔피언 261012_140257_duck_obs_history (보행 점수 88.1) → 명령 3칸 관측으로 늘려 C1~C6 이어서 학습 (각 2,200만 스텝)",
-    "C1 앞 속도 0.05~0.25 → C2 회전 ±0.3 → C3 옆 ±0.1·뒤 −0.1 → C4 회전 ±0.5 → C5 옆 ±0.15 → C6 forward_velocity 2 → 6",
-    "평가: 명령 점수 90.9 (30 / 33), 보행 점수 86.2, 밀기 20 / 20, 모델 오차 29 / 30. 자세한 기록: docs/10 §9, docs/09 §10"
+    "Open Duck Mini v2 명령 따라 걷기 정책 (5차 자율 학습 R4, 261014_221229_duck_speed40_ds03). 실물 센서만 사용 (--deployable-obs), 관측 기록 3스텝",
+    "4차 C6(docs/09 §10) → 5차 R1(머리 흔들림 −3·뒤 범위) → R2~R4 속도 커리큘럼 (앞 범위 0.30 → 0.35 → 0.40, 빠른 명령 양발 지지 0.05 → 0.03, forward_velocity 8, yaw_tracking 4)",
+    "평가 (명령당 10번): 명령 108 / 110, 보행 점수 90.6, 앞 0.35 명령 → 0.33 m/s (7 / 10), 0.375 → 0.34, 머리 흔들림 8.6 cm. docs/10 §10",
+    "실물 조종 권장 범위: 앞 0.30·뒤 0.08까지 (더 빠른 명령은 섞인 코스에서 가끔 넘어짐)"
   ]
 }
