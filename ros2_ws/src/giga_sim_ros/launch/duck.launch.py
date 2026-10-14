@@ -3,8 +3,8 @@
     ros2 launch giga_sim_ros duck.launch.py                          # 평지, 저장소의 명령 따라 걷기 정책
     ros2 launch giga_sim_ros duck.launch.py terrain:=mixed           # 언덕·경사로·장애물 (원점 주변은 평평)
     ros2 launch giga_sim_ros duck.launch.py policy:=output/learning/<실행>/policy.npz
-    ros2 launch giga_sim_ros duck.launch.py cmd_timeout:=0            # 키보드 조종용: 마지막 명령 유지
-    다른 터미널에서 조종:  ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.1 -p turn:=0.3
+    다른 터미널에서 조종:  ros2 run giga_sim_ros key_teleop          (방향키, 그 터미널을 클릭해 둔 채로)
+    ros2 launch giga_sim_ros duck.launch.py cmd_timeout:=0            # 키를 누를 때만 보내는 조종기용 (teleop_twist_keyboard)
 
 실행되는 노드
     sim_node     MuJoCo 오리 (가짜 하드웨어): 학습과 같은 서보 모델·서 있는 자세 — 정책의 학습 설정(.json)에서 읽음

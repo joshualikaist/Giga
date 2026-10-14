@@ -31,6 +31,7 @@ setup(
             'sim_node = giga_sim_ros.sim_node:main',
             'demo_controller = giga_sim_ros.demo_controller:main',
             'policy_node = giga_sim_ros.policy_node:main',      # 학습한 보행 정책 (docs/11)
+            'key_teleop = giga_sim_ros.key_teleop:main',        # 방향키로 /cmd_vel (docs/11)
         ],
     },
 )

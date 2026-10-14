@@ -7,7 +7,7 @@ GPU(MJX)에서 학습한 명령 따라 걷기 정책(docs/09 §10)을 **ROS2 토
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
-| 1 | ROS로 정책 돌리기 (sim_node + policy_node), 키보드 조종 | ✅ 이 문서 §1~§5 |
+| 1 | ROS로 정책 돌리기 (sim_node + policy_node), 키보드 조종 (key_teleop) | ✅ 이 문서 §1~§5 |
 | 2 | 핸드폰 조이스틱 (같은 Wi-Fi, 브라우저만) | 다음 |
 | 3 | 직접 만드는 험지 (YAML 블록 코스, 흑백 PNG 높이맵) | |
 | 4 | 조종 기록 → 넘어진 곳·조종 습관을 학습에 → 다시 확인 | |
@@ -36,32 +36,38 @@ flowchart LR
 
 ```bash
 source scripts/activate.sh
-bash scripts/build_ros.sh && source scripts/activate.sh          # 처음 한 번 (새 노드 policy_node)
-ros2 launch giga_sim_ros duck.launch.py cmd_timeout:=0           # MuJoCo 창에 오리. 평지
+bash scripts/build_ros.sh && source scripts/activate.sh          # 처음 한 번 (새 노드 policy_node, key_teleop)
+ros2 launch giga_sim_ros duck.launch.py                          # MuJoCo 창에 오리. 평지
 ```
 
-다른 터미널에서:
+다른 터미널에서 (**이 터미널을 클릭해 둔 채로** 키를 누름 — MuJoCo 창이 아니라):
 
 ```bash
 source scripts/activate.sh
-ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.1 -p turn:=0.3
+ros2 run giga_sim_ros key_teleop
 ```
 
-| 키 (조종 터미널에서) | 동작 |
+| 키 | 동작 |
 |---|---|
-| `i` / `,` | 앞으로 / 뒤로 |
-| `j` / `l` | 제자리 왼쪽 / 오른쪽 돌기 |
-| `u` / `o` | 걸으며 왼쪽 / 오른쪽 돌기 |
-| `Shift` + `J` / `L` | 왼쪽 / 오른쪽 옆걸음 |
-| `k` | 멈춤 (제자리 걸음) |
-| `w` / `x`, `e` / `c` | 앞뒤·옆 속도 / 회전 속도 10 % 올리기 / 내리기 |
+| ↑ / ↓ | 앞뒤 속도 +0.05 / −0.05 m/s (누를 때마다 쌓임) |
+| ← / → | 회전 +0.1 / −0.1 rad/s (왼쪽 / 오른쪽) |
+| PageUp / PageDown | 옆 속도 +0.04 / −0.04 m/s (왼쪽 / 오른쪽) |
+| Space, Backspace | 멈춤 (제자리 걸음) |
+| Home | 기본 명령 (앞 0.15) |
+| r | 처음 자리로 (`/policy/reset`) |
 
-- `cmd_timeout:=0`: 키보드 조종기는 키를 누를 때만 명령을 보내므로, 마지막 명령을 계속 유지하게 합니다 (`k`로 멈춤).
+키를 누를 때마다 터미널에 지금 명령(`명령  앞뒤 +0.10 m/s   옆 …`)이 보입니다. README 16단계(`play_walk.py --view`)와 같은 키입니다.
+
+- 카메라가 오리를 따라가므로, 걷는지는 **바닥 격자가 흘러가는 것**으로 보입니다 (0.1 m/s = 1초에 10 cm).
 - 지형: `terrain:=hills | slopes | obstacles | mixed` (원점 주변 0.35 m는 평평한 출발 자리, 넓이 8 × 8 m),
   `terrain_difficulty:=1.5` (평가 시험 수준), `terrain_seed:=3`.
-- 처음 자리로: `ros2 service call /policy/reset std_srvs/srv/Trigger` (시뮬레이터와 정책의 걸음 박자·기록을 함께 처음으로).
 - 다른 정책: `policy:=output/learning/<실행>/policy.npz` — Brax 정책은 먼저 바꾸기:
   `python learning/export_policy.py --params output/learning/<실행>/params.pkl` (GPU 학습 환경에서)
+
+**ROS 표준 조종기(`teleop_twist_keyboard`)를 쓰고 싶다면** — 글자 키(`i` 앞, `,` 뒤, `j`/`l` 돌기, `Shift`+`J`/`L` 옆, `k` 멈춤)를 쓰고,
+키를 누를 때만 명령을 보내므로 `duck.launch.py cmd_timeout:=0`(마지막 명령 유지)으로 실행해야 합니다.
+⚠ **한글 입력 상태면 동작하지 않습니다**: `i`를 누르면 `ㅑ`가 들어가고, 모르는 키는 '멈춤'으로 처리되며, 움직임 키를 눌러도
+화면에 아무것도 표시되지 않아 고장처럼 보입니다 (한/영 키로 영어로 바꾸면 됨). 그래서 방향키를 쓰는 `key_teleop`을 만들었습니다.
 
 ## 3. 무엇을 만들었나
 
@@ -71,6 +77,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.1 -p
 | `biped_sim/policy.py`, `learning/export_policy.py` | Brax 정책 → numpy (`.npz`: 관측 정규화 + 신경망 층). 행동 차이 7 × 10⁻⁷ (변환할 때 확인). 실물 보드에서도 같은 방식 |
 | `ros2_ws/.../sim_node.py` | `robot:=open_duck_mini`, `terrain:=…` 추가. 실제 시간 맞추기 (§4) |
 | `ros2_ws/.../policy_node.py` | 센서 토픽 + `/cmd_vel` → 관절 목표 50 Hz, `/policy/reset` |
+| `ros2_ws/.../key_teleop.py` | 터미널 방향키 → `/cmd_vel` 10 Hz (한글 입력 상태에서도 동작, 지금 명령 표시) |
 | `ros2_ws/.../duck.launch.py` | 둘을 함께 실행. 정책의 학습 설정에서 로봇·서보·자세를 읽어 sim_node에 넘김 |
 
 ## 4. 결과: ROS를 거쳐도 학습한 대로 걷나
@@ -102,7 +109,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.1 -p
 
 | 파일 | 역할 |
 |---|---|
-| `tests/test_ros_duck.py` | launch로 오리 + 정책 실행 → `/cmd_vel` 앞·옆 명령대로 움직임, `/policy/reset`, 깔끔한 종료 |
+| `tests/test_ros_duck.py` | launch로 오리 + 정책 실행 → `/cmd_vel` 앞·옆 명령대로 움직임, `/policy/reset`, 깔끔한 종료. key_teleop: 키 해석, 가상 터미널에서 방향키 → `/cmd_vel` |
 | `tests/test_open_duck.py::test_walk_spec_and_numpy_policy_run_without_jax` | ROS용 환경(jax 없음)에서 모델·numpy 정책, IMU 자세 → 중력 방향 |
 | `tests/test_walk_mjx.py::test_numpy_policy_matches_brax` | numpy 정책 = Brax 정책 |
 | `learning/pretrained/duck_cmd_policy.npz` (+ `.json`) | 명령 따라 걷기 챔피언 (docs/09 §10)의 numpy 판 |

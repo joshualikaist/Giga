@@ -202,9 +202,9 @@ python -m pytest
 창 없이 약 1분 동안 시뮬레이션·튜토리얼·ROS2 연동을 모두 시험합니다.
 (`pytest`만 치면 "명령을 찾을 수 없음"이 나올 수 있습니다: 시스템에 이미 깔린 pytest를 쓰느라 `pytest` 명령이 따로 안 생겨서. `python -m pytest`는 항상 됩니다.)
 
-✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 31 skipped`).
+✅ 확인: 마지막 줄에 `failed`가 없으면 성공입니다 (처음엔 `32 passed, 33 skipped`).
 `skipped`는 아직 설치하지 않은 선택 항목의 테스트입니다: 9단계 학습 패키지(5개), 10단계 GPU 학습 환경(19개, 그 환경에서
-`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(7개). 설치하면 그만큼 `passed`로 바뀝니다.
+`python -m pytest tests/test_walk_mjx.py`로 따로 실행), 11단계 오리 로봇 파일(9개). 설치하면 그만큼 `passed`로 바뀝니다.
 
 ---
 
@@ -476,18 +476,24 @@ python learning/play_walk.py --view --params learning/pretrained/duck_cmd_policy
 같은 구조로 MuJoCo 오리를 조종해, 학습과 다른 시뮬레이터 + 메시지 지연에서도 걷는지 확인합니다 (GPU 없어도 됨).
 
 ```bash
-bash scripts/build_ros.sh && source scripts/activate.sh          # 새 노드(policy_node)를 위해 다시 빌드
-ros2 launch giga_sim_ros duck.launch.py cmd_timeout:=0           # 오리 + 정책 (terrain:=mixed 이면 험지)
+bash scripts/build_ros.sh && source scripts/activate.sh          # 새 노드(policy_node, key_teleop)를 위해 다시 빌드
+ros2 launch giga_sim_ros duck.launch.py                          # 오리 + 정책 (terrain:=mixed 이면 험지)
 ```
 
-다른 터미널에서 키보드로 조종 (`i` 앞, `,` 뒤, `j`/`l` 돌기, `Shift`+`J`/`L` 옆걸음, `k` 멈춤):
+다른 터미널에서 키보드로 조종 — **이 터미널을 클릭해 둔 채로** 키를 누릅니다 (MuJoCo 창이 아니라):
 
 ```bash
 source scripts/activate.sh
-ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.1 -p turn:=0.3
+ros2 run giga_sim_ros key_teleop
 ```
 
-✅ 확인: 키를 누르면 MuJoCo 창의 오리가 그쪽으로 걸으면 성공. 넘어지면 1초 뒤 처음 자리로 돌아옵니다.
+16단계와 같은 키입니다: ↑↓ 앞뒤 속도, ←→ 돌기, PageUp/PageDown 옆걸음, Space 멈춤, Home 기본(앞 0.15), r 처음 자리로.
+
+✅ 확인: 키를 누를 때마다 터미널에 `명령  앞뒤 +0.05 m/s …`가 바뀌고, MuJoCo 창의 오리가 그쪽으로 걸으면 성공
+(카메라가 오리를 따라가므로 바닥 격자가 흘러가는 것으로 보입니다). 넘어지면 1초 뒤 처음 자리로 돌아옵니다.
+
+> ROS 표준 조종기 `teleop_twist_keyboard`는 글자 키(`i`, `j`…)를 쓰는데, **한글 입력 상태면 아무 반응이 없습니다** (`ㅑ`가 들어가 '멈춤').
+> 방향키를 쓰는 `key_teleop`은 한/영 상태와 상관없이 동작합니다.
 
 ```mermaid
 flowchart LR

@@ -130,3 +130,62 @@ def test_duck_policy_follows_cmd_vel_through_ros(driver):
     assert proc.returncode == 0, out
     assert out.count("process has finished cleanly") == 2, out   # sim_node, policy_node
     assert "Traceback" not in out, out
+
+
+def test_key_teleop_parses_arrows_and_warns_on_hangul():
+    """key_teleop: 방향키·PageUp/Down·Space·Home 바이트 → 명령. 한글 입력('ㅑ')은 무시하고 경고만."""
+    kt = pytest.importorskip("giga_sim_ros.key_teleop", reason="ros2_ws 미빌드")
+    keys = kt.parse_keys(b"\x1b[A\x1b[A\x1b[D\x1b[5~" + "ㅑ".encode() + b"x \x1b[H")
+    assert keys == ["up", "up", "left", "pageup", "hangul", "other", "stop", "home"]
+    cmd = [0.0, 0.0, 0.0]
+    for k in keys[:4]:
+        cmd = kt.apply_key(cmd, k)
+    assert cmd == [0.1, 0.04, 0.1]
+    for _ in range(10):
+        cmd = kt.apply_key(cmd, "up")
+    assert cmd[0] == 0.25                                   # 학습 범위에서 멈춤
+    assert kt.apply_key(cmd, "stop") == [0.0, 0.0, 0.0]
+    assert kt.apply_key(cmd, "home") == [0.15, 0.0, 0.0]
+
+
+def test_key_teleop_publishes_cmd_vel_from_terminal():
+    """key_teleop을 가상 터미널(pty)에서 실행하고 ↑↑← 를 누르면 /cmd_vel (0.1, 0, 0.1)이 10 Hz로 나옴."""
+    import pty
+
+    import rclpy
+    from geometry_msgs.msg import Twist
+    from rclpy.executors import SingleThreadedExecutor
+
+    ctx = rclpy.Context()
+    rclpy.init(context=ctx, domain_id=DOMAIN_ID)
+    node = rclpy.create_node("key_listener", context=ctx)
+    got = []
+    node.create_subscription(Twist, "cmd_vel", lambda m: got.append((m.linear.x, m.linear.y, m.angular.z)), 50)
+    master, slave = pty.openpty()
+    env = dict(os.environ, ROS_DOMAIN_ID=str(DOMAIN_ID))
+    proc = subprocess.Popen(["ros2", "run", "giga_sim_ros", "key_teleop"], stdin=slave, stdout=slave, stderr=slave,
+                            env=env, start_new_session=True)
+    executor = SingleThreadedExecutor(context=ctx)
+    executor.add_node(node)
+    try:
+        end = time.time() + 15
+        while not got and time.time() < end:
+            executor.spin_once(timeout_sec=0.05)
+        assert got, "key_teleop이 /cmd_vel을 보내지 않음"
+        os.write(master, b"\x1b[A")
+        time.sleep(0.3)
+        os.write(master, b"\x1b[A\x1b[D")
+        got.clear()
+        end = time.time() + 2
+        while time.time() < end:
+            executor.spin_once(timeout_sec=0.02)
+        assert got[-1] == pytest.approx((0.1, 0.0, 0.1))
+        assert 15 <= len(got) <= 25                          # 키를 안 눌러도 10 Hz
+    finally:
+        os.killpg(proc.pid, signal.SIGINT)
+        proc.wait(timeout=10)
+        os.close(master)
+        os.close(slave)
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown(context=ctx)
