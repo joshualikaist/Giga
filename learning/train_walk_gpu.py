@@ -203,6 +203,9 @@ def main():
                         help="빠른 앞뒤 명령에서 gait_phase 보상의 양발 지지 폭 (기본 0.1 = 한 주기의 40 %%가 양발, 디딤 비율 0.7). "
                              "명령 |vx|가 목표 속도(오리 0.15) → --fast-speed로 갈수록 이 값으로 줄임 (0.05면 디딤 비율 0.6: "
                              "서보 속도로 낼 수 있는 최고 속도 0.22~0.28 → 0.34~0.43 m/s, docs/09 §8.5)")
+    parser.add_argument("--head-sway-gate", type=float, nargs=2, default=None, metavar=("뒤", "회전"),
+                        help="head_sway 벌점을 빼 주는 명령: 뒤로 이 속도 [m/s] 이상, 회전 이 속도 [rad/s] 이상이면 벌점 0 "
+                             "(사이는 직선). 예: 0.05 0.3 — 뒤로·제자리 돌기가 벌점을 피하려 '서 있기'를 고르지 않게 (docs/10 6차)")
     parser.add_argument("--fast-speed", type=float, default=0.375, metavar="V",
                         help="--double-support-fast가 다 적용되는 앞뒤 명령 속도 [m/s]")
     parser.add_argument("--obs-history", type=int, default=0, metavar="H",
@@ -255,6 +258,9 @@ def main():
     if args.double_support_fast is not None:
         import dataclasses
         spec = dataclasses.replace(spec, double_support_fast=args.double_support_fast, fast_speed=args.fast_speed)
+    if args.head_sway_gate is not None:
+        import dataclasses
+        spec = dataclasses.replace(spec, head_sway_gate=tuple(args.head_sway_gate))
     commands = None
     if args.cmd_vx or args.cmd_vy or args.cmd_wz:   # 명령 따라 걷기
         import dataclasses
@@ -296,6 +302,7 @@ def main():
         "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None, "obs_history": args.obs_history,
         "command_obs": commands is not None, "commands": commands,
         "double_support_fast": args.double_support_fast, "fast_speed": args.fast_speed,
+        "head_sway_gate": args.head_sway_gate,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},

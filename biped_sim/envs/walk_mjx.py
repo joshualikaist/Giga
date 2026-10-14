@@ -43,7 +43,7 @@ from ..builder import FREEJOINT_NAME
 from .walk_spec import (CONTROL_DT, COM_SHIFT_TARGET, COMMANDS_DEFAULT, DOMAIN_RAND, FALL_TILT,  # noqa: F401 (다른 모듈이 walk_mjx.이름으로 씀)
                         GAIT_METRICS, OBS_NOISE, PHYSICS_DT, REWARD_WEIGHTS, SERVO_DATASHEET, SERVO_MODELS, SPECS,
                         WalkSpec, _home_base_height, base_observation, build_mjx_model, double_support_width,
-                        mirror_table, spec_from_config, with_home_knee, with_servo)
+                        head_sway_gate, mirror_table, spec_from_config, with_home_knee, with_servo)
 
 
 def tilt_matrix(roll, pitch):
@@ -312,7 +312,8 @@ class BipedWalkMjxEnv(Env):
                 "yaw_tracking": jnp.exp(-jnp.square(yaw_err) / 0.1),
                 "step_length": (speed > 0.03) * jnp.sum(real_step * jnp.clip(ahead_cmd, -0.2, target) / target),
                 "symmetry": asym * jnp.maximum(0.0, 1.0 - jnp.abs(c[2]) / 0.3),   # 돌 때는 좌우가 다른 게 당연
-                "head_sway": jnp.square(head_lat - c[1]),                        # 옆걸음 명령만큼은 움직여도 됨
+                "head_sway": jnp.square(head_lat - c[1]) * head_sway_gate(sp, c),   # 옆걸음 명령만큼은 움직여도 됨.
+                                                                                       # 게이트: 뒤로·돌기 명령은 빼 줌 (6차)
                 "gait_phase": self._gait_phase_match(info["time"], contact, sp.gait_period,
                                                      double_support_width(sp, c[0])),
             }

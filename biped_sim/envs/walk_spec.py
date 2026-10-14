@@ -106,6 +106,10 @@ class WalkSpec:
     # 명령 따라 걷기: 관측의 '목표 속도' 1칸 대신 명령 3칸 (vx, vy, wz)
     command_obs: bool = False
     head_body: str | None = None                          # 머리 바디 (head_sway 보상·흔들림 측정용)
+    # head_sway 벌점을 빼 주는 명령 (뒤 속도, 회전 속도). None = 늘 벌점. (0.05, 0.3)이면 뒤로 0.05 m/s 이상이나 회전 0.3 rad/s
+    # 이상인 명령에서는 벌점 0 (사이는 직선). 벌점은 걸을 때마다 거의 같은 크기라, 추종 이득이 작은 뒤로·제자리 돌기 명령에서
+    # '서 있기'를 고르게 만들었음 (docs/10 5차 R1b) → 그 명령들은 빼 줌
+    head_sway_gate: tuple[float, float] | None = None
     # gait_phase 보상의 양발 지지 구간: 박자가 바뀌는 앞뒤 double_support 주기씩 (기본 0.1 → 한 주기의 40 %가 양발,
     # 발마다 디딤 비율 β = 0.7). 서보 속도로 낼 수 있는 최고 속도는 β로 정해짐 (docs/09 §8.5: β 0.7 → 0.22~0.28 m/s,
     # 0.6 → 0.34~0.43 m/s). double_support_fast를 주면 앞뒤 명령 속도가 target_speed → fast_speed로 갈수록 그 값으로 줄임
@@ -298,6 +302,8 @@ def spec_from_config(config: dict) -> WalkSpec:
         spec = replace(spec, command_obs=True)
     if config.get("obs_history"):                                                # --obs-history
         spec = replace(spec, obs_history=int(config["obs_history"]))
+    if config.get("head_sway_gate"):                                             # --head-sway-gate
+        spec = replace(spec, head_sway_gate=tuple(float(x) for x in config["head_sway_gate"]))
     if config.get("double_support_fast") is not None:                            # --double-support-fast
         spec = replace(spec, double_support_fast=float(config["double_support_fast"]),
                        fast_speed=float(config.get("fast_speed", spec.fast_speed)))
@@ -329,3 +335,16 @@ def double_support_width(spec: WalkSpec, speed_x):
     frac = frac * (frac > 0)                       # clip 0~1 (jax 배열에도 되게 연산자로)
     frac = frac - (frac - 1) * (frac > 1)
     return spec.double_support + (spec.double_support_fast - spec.double_support) * frac
+
+
+def head_sway_gate(spec: WalkSpec, command):
+    """head_sway 벌점에 곱하는 값 (0~1): 뒤로 가는 명령·도는 명령일수록 작게. spec.head_sway_gate가 없으면 1.
+    numpy·jax 모두 (곱셈·비교만 씀). command = (vx, vy, wz)."""
+    if spec.head_sway_gate is None:
+        return 1.0
+    back, turn = spec.head_sway_gate
+    b = -command[0] / back
+    b = b * (b > 0) - (b - 1) * (b > 1)            # clip 0~1
+    w = abs(command[2]) / turn
+    w = w - (w - 1) * (w > 1)
+    return (1 - b) * (1 - w)

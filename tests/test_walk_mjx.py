@@ -492,6 +492,15 @@ def test_head_sway_and_fast_double_support():
     assert float(after.metrics["gait/head_sway"]) == pytest.approx(lateral ** 2, rel=1e-3)
     assert lateral ** 2 > 1e-3 and float(after.metrics["reward/head_sway"]) < 0
 
+    from biped_sim.envs.walk_spec import head_sway_gate   # 6차: 뒤로·돌기 명령은 벌점에서 빼 줌
+    gated = walk_mjx.spec_from_config({"robot": "open_duck_mini", "head_sway_gate": [0.05, 0.3]})
+    assert head_sway_gate(spec, (-0.1, 0.0, 0.4)) == 1.0                     # 게이트 없으면 늘 1
+    assert head_sway_gate(gated, (0.15, 0.0, 0.0)) == 1.0                    # 앞으로 걷기·정지·옆걸음은 그대로
+    assert head_sway_gate(gated, (0.0, 0.08, 0.0)) == 1.0
+    assert head_sway_gate(gated, (-0.08, 0.0, 0.0)) == 0.0                   # 뒤로
+    assert head_sway_gate(gated, (0.0, 0.0, -0.4)) == 0.0                    # 제자리 돌기
+    assert head_sway_gate(gated, (-0.025, 0.0, 0.15)) == pytest.approx(0.25)  # 사이는 직선
+
     runner = MujocoRunner(dataclasses.replace(spec, home_knee=None))
     m = gait_metrics(run_episode(runner, None, seconds=3.0), runner.info)
     assert m["head_sway_cm"] is not None and m["head_sway_cm"] < 1.0    # 서 있기만 하면 거의 안 흔들림
