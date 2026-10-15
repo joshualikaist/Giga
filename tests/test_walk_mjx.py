@@ -507,6 +507,61 @@ def test_head_sway_and_fast_double_support():
     assert m["head_sway_cm"] is not None and m["head_sway_cm"] < 1.0    # 서 있기만 하면 거의 안 흔들림
 
 
+@pytest.mark.skipif(not HAVE_MJX or not walk_mjx.SPECS["open_duck_mini"].robot.urdf.exists(),
+                    reason="오리 로봇 파일 없음 → bash scripts/get_open_duck.sh")
+def test_roll_excess_and_lateral_deadband():
+    """7차: ① roll_excess는 roll_free를 넘는 구르기만 벌하고, 안 구르는 명령(정지·제자리 돌기)에는 0이라 '서 있기'를 부추기지 않음
+    ② 옆 속도 dead-band 안의 오차는 명령 추종 보상을 깎지 않음 ③ --clearance-target이 config로 전달됨."""
+    import dataclasses
+
+    import jax
+
+    spec = walk_mjx.spec_from_config({"robot": "open_duck_mini", "servo": "open_duck", "command_obs": True,
+                                      "clearance_target": 0.017, "lateral_deadband": 0.1, "roll_free": 0.14})
+    assert (spec.clearance_target, spec.lateral_deadband, spec.roll_free) == (0.017, 0.1, 0.14)
+
+    env = walk_mjx.BipedWalkMjxEnv(spec, reward_weights={"roll_excess": -30.0, "forward_velocity": 8.0,
+                                                         "lateral_velocity": -1.0})
+    step = jax.jit(env.step)
+    state = jax.jit(env.reset)(jax.random.PRNGKey(0))
+    zero = np.zeros(spec.n, np.float32)
+
+    def run(qvel_set=(), command=(0.15, 0.0, 0.0), qpos_set=()):
+        s = state
+        q, v = s.pipeline_state.qpos, s.pipeline_state.qvel
+        for i, x in qpos_set:
+            q = q.at[i].set(x)
+        for i, x in qvel_set:
+            v = v.at[i].set(x)
+        s = s.replace(pipeline_state=s.pipeline_state.replace(qpos=q, qvel=v),
+                      info={**s.info, "command": np.array(command, np.float32)})
+        return step(s, zero)
+
+    # ① 똑바로 서 있으면 벌점 0, 옆으로 많이 구르면 벌점
+    assert float(run().metrics["reward/roll_excess"]) == pytest.approx(0.0, abs=1e-6)
+    tilted = run(qpos_set=[(3, 0.966), (4, 0.259), (5, 0.0), (6, 0.0)])     # roll 30° (w, x, y, z)
+    assert float(tilted.metrics["gait/roll_abs"]) == pytest.approx(np.radians(30), abs=0.02)
+    assert float(tilted.metrics["reward/roll_excess"]) < 0            # (30° − 8°)² 만큼 벌점
+    for cmd in ((0.0, 0.0, 0.0), (0.0, 0.0, 0.4), (-0.08, 0.0, 0.0)):   # 안 구르면 어떤 명령이든 0
+        assert float(run(command=cmd).metrics["reward/roll_excess"]) == pytest.approx(0.0, abs=1e-6)
+
+    # ② dead-band: 물리는 똑같고 dead-band 폭만 다른 환경 셋으로 비교 (스텝 뒤 로봇은 스스로 조금 옆으로 움직임)
+    def reward_with(deadband, v_lat):
+        e = walk_mjx.BipedWalkMjxEnv(dataclasses.replace(spec, lateral_deadband=deadband),
+                                     reward_weights={"forward_velocity": 8.0, "lateral_velocity": -1.0})
+        s0 = jax.jit(e.reset)(jax.random.PRNGKey(0))
+        s0 = s0.replace(pipeline_state=s0.pipeline_state.replace(qvel=s0.pipeline_state.qvel.at[1].set(v_lat)),
+                        info={**s0.info, "command": np.array([0.15, 0.0, 0.0], np.float32)})
+        m = jax.jit(e.step)(s0, zero).metrics
+        return float(m["reward/forward_velocity"]), float(m["reward/lateral_velocity"])
+
+    for v_lat in (0.0, 0.25):                       # 어떤 옆 속도에서도 dead-band가 넓을수록 덜 깎임
+        none, band, wide = (reward_with(d, v_lat) for d in (0.0, 0.1, 1.0))
+        assert none[0] <= band[0] <= wide[0], (v_lat, none, band, wide)      # 추종 보상
+        assert none[1] <= band[1] <= wide[1] == pytest.approx(0.0, abs=1e-9)  # 옆 미끄러짐 벌점 (넓으면 0)
+        assert none[1] < 0                                                    # dead-band가 없으면 늘 벌점
+
+
 def test_numpy_policy_matches_brax():
     """learning/export_policy.py로 바꾼 numpy 정책(.npz, ROS2 policy_node가 씀)이 Brax 정책과 같은 행동을 낸다."""
     from walk_tools import load_policy

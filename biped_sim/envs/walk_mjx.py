@@ -250,6 +250,7 @@ class BipedWalkMjxEnv(Env):
         tilt_cos = rot[2, 2]
         tilt = jnp.arccos(jnp.clip(tilt_cos, -1.0, 1.0))
         yaw = jnp.arctan2(rot[1, 0], rot[0, 0])
+        roll = jnp.arctan2(rot[2, 1], rot[2, 2])           # 몸통 구르기 (walk_tools의 rpy[0]과 같은 정의)
         height = data.xpos[self.base_body, 2] - self.ground(data.xpos[self.base_body, :2])   # 그 자리 땅 기준
         foot_z = data.xpos[self.foot_bodies, 2] - self.ground(data.xpos[self.foot_bodies, :2])
         contact = foot_z < sp.foot_contact_z
@@ -283,8 +284,8 @@ class BipedWalkMjxEnv(Env):
         #     (위치 차분은 쓰지 않음: Brax 자동 리셋은 info를 되돌리지 않아 리셋 직후 큰 값이 나옴)
         cy, sy = jnp.cos(yaw), jnp.sin(yaw)
         if self.head_body is not None:
-            v_head = vel_world + jnp.cross(rot @ ang_body, data.xpos[self.head_body] - data.xpos[self.base_body])
-            head_lat = -sy * v_head[0] + cy * v_head[1]
+            v_head_world = vel_world + jnp.cross(rot @ ang_body, data.xpos[self.head_body] - data.xpos[self.base_body])
+            head_lat = -sy * v_head_world[0] + cy * v_head_world[1]
         else:
             head_lat = jnp.zeros(())
 
@@ -293,8 +294,12 @@ class BipedWalkMjxEnv(Env):
         cmd_terms = {}
         if sp.command_obs:
             c = state.info["command"]
-            v_head = jnp.array([cy * vel_world[0] + sy * vel_world[1], -sy * vel_world[0] + cy * vel_world[1]])
-            lin_err2 = jnp.sum(jnp.square(v_head - c[:2]))
+            # v_heading = 몸통이 향한 방향 기준 (앞뒤, 옆) 속도 — 머리 속도(v_head_world)와 다름
+            v_heading = jnp.array([cy * vel_world[0] + sy * vel_world[1], -sy * vel_world[0] + cy * vel_world[1]])
+            lat_err = v_heading[1] - c[1]
+            # 옆 오차는 dead-band만큼 봐줌: 몸통을 수평으로 두고 무게중심을 좌우로 옮기는 정상 걸음을 벌하지 않도록
+            lat_err = jnp.sign(lat_err) * jnp.maximum(jnp.abs(lat_err) - sp.lateral_deadband, 0.0)
+            lin_err2 = jnp.square(v_heading[0] - c[0]) + jnp.square(lat_err)
             yaw_err = ang_body[2] - c[2]
             info["heading_target"] = state.info["heading_target"] + c[2] * CONTROL_DT   # 회전 명령을 쌓은 방향
             d = yaw - state.info["heading_target"]
@@ -307,7 +312,7 @@ class BipedWalkMjxEnv(Env):
             ahead_cmd = (feet_xy - feet_xy[::-1]) @ d_world
             cmd_terms = {
                 "forward_velocity": jnp.exp(-lin_err2 / sp.velocity_sigma2),
-                "lateral_velocity": jnp.square(v_head[1] - c[1]),
+                "lateral_velocity": jnp.square(lat_err),
                 "yaw_rate": jnp.square(yaw_err),
                 "yaw_tracking": jnp.exp(-jnp.square(yaw_err) / 0.1),
                 "step_length": (speed > 0.03) * jnp.sum(real_step * jnp.clip(ahead_cmd, -0.2, target) / target),
@@ -343,6 +348,8 @@ class BipedWalkMjxEnv(Env):
             "foot_clearance": clearance_reward,
             "yaw_tracking": jnp.zeros(()),
             "head_sway": jnp.square(head_lat),
+            # 꼭 필요한 만큼(roll_free)을 넘는 몸통 구르기만 벌점 → 안 구르는 명령(정지·제자리 돌기)에는 0
+            "roll_excess": jnp.square(jnp.maximum(jnp.abs(roll) - sp.roll_free, 0.0)),
         }
         terms.update(cmd_terms)
         # 방향: 명령 모드에서는 1 − cos(오차) (최대 2). 제곱이면 돌기 명령을 못 따라갈 때 오차가 180°까지 쌓여 다른 보상을
@@ -381,6 +388,7 @@ class BipedWalkMjxEnv(Env):
             "gait/track_lin": track_lin,                             # 속도 명령과의 차이 [m/s]
             "gait/track_yaw": track_yaw,                             # 회전 명령과의 차이 [rad/s]
             "gait/head_sway": jnp.square(head_lat),                  # 머리 옆 속도² [m²/s²] (명령 빼지 않음)
+            "gait/roll_abs": jnp.abs(roll),                          # 몸통 구르기 각도 [rad]
         })
         metrics["forward_speed"] = vel_world[0]
         obs = self._observation(data, info, vel_body=vel_body, ang_body=ang_body)

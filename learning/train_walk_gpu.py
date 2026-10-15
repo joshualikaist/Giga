@@ -203,6 +203,14 @@ def main():
                         help="빠른 앞뒤 명령에서 gait_phase 보상의 양발 지지 폭 (기본 0.1 = 한 주기의 40 %%가 양발, 디딤 비율 0.7). "
                              "명령 |vx|가 목표 속도(오리 0.15) → --fast-speed로 갈수록 이 값으로 줄임 (0.05면 디딤 비율 0.6: "
                              "서보 속도로 낼 수 있는 최고 속도 0.22~0.28 → 0.34~0.43 m/s, docs/09 §8.5)")
+    parser.add_argument("--clearance-target", type=float, default=None, metavar="M",
+                        help="foot_clearance 보상이 만점이 되는 흔듦 최고 발 높이 [m] (오리 기본 0.03). 지금 정책은 1.85 cm까지만 들어"
+                             "보상이 포화되지 않고, 그 들기의 96 %%가 골반 기울기(몸통 구르기)에서 나옴 → 0.017로 낮추면 압박이 사라짐")
+    parser.add_argument("--lateral-deadband", type=float, default=None, metavar="V",
+                        help="명령 추종 오차에서 봐주는 옆 속도 [m/s] (기본 0 = 전부 벌점). 몸통을 수평으로 두고 무게중심을 좌우로 "
+                             "옮기는 정상 걸음은 옆 속도가 최대 약 0.15 m/s라, dead-band가 없으면 '구르기'가 더 싸짐 (docs/10 §12)")
+    parser.add_argument("--roll-free", type=float, default=None, metavar="RAD",
+                        help="roll_excess 벌점이 봐주는 몸통 구르기 [rad] (기본 0.14 = 8°)")
     parser.add_argument("--head-sway-gate", type=float, nargs=2, default=None, metavar=("뒤", "회전"),
                         help="head_sway 벌점을 빼 주는 명령: 뒤로 이 속도 [m/s] 이상, 회전 이 속도 [rad/s] 이상이면 벌점 0 "
                              "(사이는 직선). 예: 0.05 0.3 — 뒤로·제자리 돌기가 벌점을 피하려 '서 있기'를 고르지 않게 (docs/10 6차)")
@@ -261,6 +269,10 @@ def main():
     if args.head_sway_gate is not None:
         import dataclasses
         spec = dataclasses.replace(spec, head_sway_gate=tuple(args.head_sway_gate))
+    import dataclasses
+    for name in ("clearance_target", "lateral_deadband", "roll_free"):
+        if getattr(args, name) is not None:
+            spec = dataclasses.replace(spec, **{name: getattr(args, name)})
     commands = None
     if args.cmd_vx or args.cmd_vy or args.cmd_wz:   # 명령 따라 걷기
         import dataclasses
@@ -302,7 +314,8 @@ def main():
         "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None, "obs_history": args.obs_history,
         "command_obs": commands is not None, "commands": commands,
         "double_support_fast": args.double_support_fast, "fast_speed": args.fast_speed,
-        "head_sway_gate": args.head_sway_gate,
+        "head_sway_gate": args.head_sway_gate, "clearance_target": spec.clearance_target,
+        "lateral_deadband": spec.lateral_deadband, "roll_free": spec.roll_free,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},
@@ -388,12 +401,14 @@ def main():
         writer.add_scalar("walk/track_yaw_rps", gait["track_yaw"], step)    # 회전 명령과의 차이
         head_sway = float(np.sqrt(gait["head_sway"]))                       # 머리 옆 속도 RMS [m/s]
         writer.add_scalar("walk/head_sway_mps", head_sway, step)
+        roll_deg = float(np.degrees(gait["roll_abs"]))                      # 몸통 구르기 평균 |각도| [°]
+        writer.add_scalar("walk/roll_abs_deg", roll_deg, step)
         writer.flush()
         print(f"  스텝 {step:>11,} / {total_steps:,} | 평균 보상 {float(metrics['eval/episode_reward']):7.2f} | "
               f"버틴 시간 {length * walk_mjx.CONTROL_DT:5.2f} s / 10 s | 앞으로 속도 {speed:+.2f} m/s | "
               f"두 발 공중 {100 * gait['flight']:3.0f}% | 좌우 다리 차이 {leg_asym:4.1f}° | 무게중심 이동 {com_shift_cm:4.1f} cm | 발 들기 {clearance_cm:4.1f} cm | 서보 한계 밖 {100 * gait['servo_over']:4.1f}% | "
               + (f"명령 오차 {gait['track_lin']:.3f} m/s·{gait['track_yaw']:.2f} rad/s | " if commands else "")
-              + (f"머리 흔들림 {head_sway:.2f} m/s | " if spec.head_body else "")
+              + (f"머리 흔들림 {head_sway:.2f} m/s | 구르기 {roll_deg:.0f}° | " if spec.head_body else "")
               + f"경과 {time.perf_counter() - t_start:5.0f} s", flush=True)
 
     def save_policy(step, make_policy, params):  # 평가 때마다 최신 정책 저장 (play_walk.py --live가 자동으로 다시 읽음)

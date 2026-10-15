@@ -46,6 +46,9 @@ REWARD_WEIGHTS = {
     "yaw_tracking": 0.0,        # exp(−(회전 속도 − 회전 명령)² / 0.1): 명령 모드에서 돌기를 따라가기 (기본 0 = 꺼짐, docs/09 §10)
     "foot_clearance": 0.0,      # 한 걸음 착지할 때 그 흔듦 동안 발을 가장 높이 든 높이 / WalkSpec.clearance_target (최대 1).
                                 #   0.1초 이상 공중에 있던 착지만. 기본 0 = 꺼짐 (오리 장애물용, docs/09 §9.7)
+    "roll_excess": 0.0,         # max(|몸통 roll| − roll_free, 0)² [rad²]: 꼭 필요한 만큼(roll_free)을 넘게 구르면 벌점.
+                                #   head_sway와 달리 서 있거나 제자리 돌기처럼 안 구르는 명령에는 0이라 '서 있기'를 부추기지 않음.
+                                #   발목 roll이 없는 오리는 발을 들려고 골반을 기울이는데(측정: 발 들기의 96 %), 그 양을 줄이려는 항 (docs/10 §12)
     "head_sway": 0.0,           # (머리의 옆 속도 − 옆 명령)² [m²/s²], 몸통 방향 기준. 머리 속도 ≈ 몸통 속도 + 각속도 × (머리 − 몸통)
                                 #   (목 관절은 home 유지라 거의 안 움직임). 몸통이 좌우로 크게 구르면(roll 32°) 높이 0.38 m의
                                 #   머리가 12 cm씩 흔들림 → 구르기를 줄이게. 기본 0 = 꺼짐. WalkSpec.head_body가 있는 로봇만 (docs/10 5차)
@@ -69,7 +72,7 @@ COM_SHIFT_TARGET = 0.024    # [m] 이만큼 옮기면 com_over_stance 만점 (§
 # 보상과 상관없이 늘 기록하는 걸음 지표 (가중치 0인 항목도 실제로 어떤지 보이게). 학습 스크립트가 에피소드 평균
 # 비율로 바꿔 TensorBoard walk/gait_<이름>_pct, walk/abs_heading_deg 로 기록한다.
 GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg_asymmetry", "com_shift",
-                "landing", "clearance", "servo_over", "track_lin", "track_yaw", "head_sway")
+                "landing", "clearance", "servo_over", "track_lin", "track_yaw", "head_sway", "roll_abs")
 # 명령 따라 걷기 (--cmd-*): 명령 = (앞뒤 속도 vx, 옆 속도 vy [m/s], 회전 속도 wz [rad/s]), 몸통이 향한 방향 기준.
 # 학습 때는 환경마다 이 범위에서 뽑고, resample초마다 새로 뽑음 (걷는 중에 명령이 바뀌는 것도 연습)
 # zero_prob: 성분마다 이 확률로 정확히 0 (범위가 0을 포함할 때만) → '제자리 돌기', '옆으로만', '뒤로만' 같은 명령이 자주 나옴
@@ -110,6 +113,10 @@ class WalkSpec:
     # 이상인 명령에서는 벌점 0 (사이는 직선). 벌점은 걸을 때마다 거의 같은 크기라, 추종 이득이 작은 뒤로·제자리 돌기 명령에서
     # '서 있기'를 고르게 만들었음 (docs/10 5차 R1b) → 그 명령들은 빼 줌
     head_sway_gate: tuple[float, float] | None = None
+    roll_free: float = 0.14               # [rad] roll_excess 벌점이 봐주는 몸통 구르기 (8°). 무게중심을 옮기는 데 필요한 양은 §8.6 기준 2.6°
+    # 명령 추종 오차에서 봐주는 옆 속도 [m/s] (0 = 지금까지처럼 전부 벌점). 몸통을 수평으로 두고 무게중심을 좌우로 옮기는
+    # 정상 걸음은 옆 속도가 최대 약 0.15 m/s인데, dead-band가 없으면 그 자체가 추종 오차로 잡혀 '구르기'가 더 싸진다 (docs/10 §12)
+    lateral_deadband: float = 0.0
     # gait_phase 보상의 양발 지지 구간: 박자가 바뀌는 앞뒤 double_support 주기씩 (기본 0.1 → 한 주기의 40 %가 양발,
     # 발마다 디딤 비율 β = 0.7). 서보 속도로 낼 수 있는 최고 속도는 β로 정해짐 (docs/09 §8.5: β 0.7 → 0.22~0.28 m/s,
     # 0.6 → 0.34~0.43 m/s). double_support_fast를 주면 앞뒤 명령 속도가 target_speed → fast_speed로 갈수록 그 값으로 줄임
@@ -302,6 +309,12 @@ def spec_from_config(config: dict) -> WalkSpec:
         spec = replace(spec, command_obs=True)
     if config.get("obs_history"):                                                # --obs-history
         spec = replace(spec, obs_history=int(config["obs_history"]))
+    if config.get("clearance_target"):                                           # --clearance-target
+        spec = replace(spec, clearance_target=float(config["clearance_target"]))
+    if config.get("lateral_deadband"):                                           # --lateral-deadband
+        spec = replace(spec, lateral_deadband=float(config["lateral_deadband"]))
+    if config.get("roll_free") is not None:                                      # --roll-free
+        spec = replace(spec, roll_free=float(config["roll_free"]))
     if config.get("head_sway_gate"):                                             # --head-sway-gate
         spec = replace(spec, head_sway_gate=tuple(float(x) for x in config["head_sway_gate"]))
     if config.get("double_support_fast") is not None:                            # --double-support-fast
