@@ -297,8 +297,11 @@ class BipedWalkMjxEnv(Env):
             # v_heading = 몸통이 향한 방향 기준 (앞뒤, 옆) 속도 — 머리 속도(v_head_world)와 다름
             v_heading = jnp.array([cy * vel_world[0] + sy * vel_world[1], -sy * vel_world[0] + cy * vel_world[1]])
             lat_err = v_heading[1] - c[1]
-            # 옆 오차는 dead-band만큼 봐줌: 몸통을 수평으로 두고 무게중심을 좌우로 옮기는 정상 걸음을 벌하지 않도록
-            lat_err = jnp.sign(lat_err) * jnp.maximum(jnp.abs(lat_err) - sp.lateral_deadband, 0.0)
+            # 옆 오차는 dead-band만큼 봐줌: 몸통을 수평으로 두고 무게중심을 좌우로 옮기는 정상 걸음을 벌하지 않도록.
+            # ⚠ 밴드는 옆 명령 크기만큼 좁힌다: 안 그러면 밴드보다 작은 옆 명령(시험값 0.08 < 0.1)은 가만히 있어도 오차 0이 되어
+            #   정책이 옆걸음을 아예 포기한다 (7차 R7에서 옆걸음 10 → 0 / 10으로 확인, docs/10 §12)
+            band = jnp.maximum(sp.lateral_deadband - jnp.abs(c[1]), 0.0)
+            lat_err = jnp.sign(lat_err) * jnp.maximum(jnp.abs(lat_err) - band, 0.0)
             lin_err2 = jnp.square(v_heading[0] - c[0]) + jnp.square(lat_err)
             yaw_err = ang_body[2] - c[2]
             info["heading_target"] = state.info["heading_target"] + c[2] * CONTROL_DT   # 회전 명령을 쌓은 방향

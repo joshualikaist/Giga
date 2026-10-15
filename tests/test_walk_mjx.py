@@ -555,6 +555,17 @@ def test_roll_excess_and_lateral_deadband():
         m = jax.jit(e.step)(s0, zero).metrics
         return float(m["reward/forward_velocity"]), float(m["reward/lateral_velocity"])
 
+    # 옆 명령이 있으면 밴드가 그만큼 좁아짐 (밴드보다 작은 명령을 무시해 버리는 것을 막음, 7차 R7)
+    def lat_reward(deadband, command):
+        e = walk_mjx.BipedWalkMjxEnv(dataclasses.replace(spec, lateral_deadband=deadband),
+                                     reward_weights={"forward_velocity": 8.0, "lateral_velocity": -1.0})
+        s0 = jax.jit(e.reset)(jax.random.PRNGKey(0))
+        s0 = s0.replace(info={**s0.info, "command": np.array(command, np.float32)})
+        return float(jax.jit(e.step)(s0, zero).metrics["reward/lateral_velocity"])
+
+    assert lat_reward(0.1, (0.0, 0.08, 0.0)) < 0     # 옆 명령 0.08 < 밴드 0.1이어도 가만히 있으면 벌점 (밴드 0.02로 좁아짐)
+    assert lat_reward(0.1, (0.0, 0.0, 0.0)) == pytest.approx(0.0, abs=1e-9)   # 옆 명령이 없을 때만 봐줌
+
     for v_lat in (0.0, 0.25):                       # 어떤 옆 속도에서도 dead-band가 넓을수록 덜 깎임
         none, band, wide = (reward_with(d, v_lat) for d in (0.0, 0.1, 1.0))
         assert none[0] <= band[0] <= wide[0], (v_lat, none, band, wide)      # 추종 보상
