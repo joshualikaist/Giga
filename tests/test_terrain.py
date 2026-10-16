@@ -60,3 +60,12 @@ def test_training_terrain_mixes_rough_and_flat_regions():
     assert 0.01 < np.abs(t.heights).max() < 0.06            # 높이 수 cm (오리 로봇 크기)
     assert np.percentile(slope, 90) > 3.0                    # 충분히 울퉁불퉁 (평균으로 섞어 상쇄되지 않음)
     assert np.mean((slope < 2) & (np.abs(t.heights) < 0.003)) > 0.1   # 평지 구역도 있음
+
+
+def test_backward_command_course_has_room_behind():
+    """뒤로 가는 명령 시험 코스는 출발점 뒤로 앞과 같은 여유 (뒤 0.12가 1 m 만에 지형 끝에서 떨어지던 문제, docs/10 §13)."""
+    ahead = make_terrain("mixed", seed=1, difficulty=1.0)
+    behind = make_terrain("mixed", seed=1, difficulty=1.0, center=(-1.5, 0.0))
+    assert ahead.center[0] - ahead.size_x == -1.0                     # 앞 코스: 뒤로 1 m뿐
+    assert behind.center[0] - behind.size_x == -4.0                   # 뒤 코스: 뒤로 4 m
+    assert abs(behind.height_at(0.0, 0.0) - behind.height_at(0.1, 0.1)) < 1e-6   # 출발 자리는 평평

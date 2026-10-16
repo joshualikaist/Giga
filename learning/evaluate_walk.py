@@ -74,10 +74,14 @@ def command_trials(config, policy, seed=0, tests=COMMAND_TEST, trials: int = 3) 
     """tests(기본 COMMAND_TEST)의 명령마다 평지 1번 + 섞인 코스 1.0 (trials − 1)번 (기본 3번).
     {이름: {ok, trials, survived, err_lin, err_yaw}}. 33번(3번 × 11)은 90 % 위에서 2σ ≈ 3~5번이라 차이를 가리려면 --command-trials 10"""
     out = {}
-    terrains = [None] + [make_terrain("mixed", seed=seed * 1000 + k, difficulty=1.0) for k in range(1, trials)]
+    # 코스는 출발점 기준 x −1 ~ +4 m라 뒤로 가는 명령은 1 m 만에 지형 끝에서 떨어진다 (뒤 0.12는 7~8초에 1.07 m를 가서 지형과
+    # 무관하게 다 넘어졌음, docs/10 §13). 뒤로 가는 명령은 코스를 뒤쪽으로 옮겨 (x −4 ~ +1 m) 앞과 같은 여유를 준다
+    ahead = [None] + [make_terrain("mixed", seed=seed * 1000 + k, difficulty=1.0) for k in range(1, trials)]
+    behind = [None] + [make_terrain("mixed", seed=seed * 1000 + k, difficulty=1.0, center=(-1.5, 0.0))
+                       for k in range(1, trials)]
     for name, cmd in tests:
         rows = []
-        for terrain in terrains:
+        for terrain in (behind if cmd[0] < 0 else ahead):
             runner = make_runner(config, terrain=terrain)
             runner.command = np.array(cmd)
             rec = run_episode(runner, policy)
