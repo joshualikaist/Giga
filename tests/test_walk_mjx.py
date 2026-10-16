@@ -555,6 +555,21 @@ def test_roll_excess_and_lateral_deadband():
         m = jax.jit(e.step)(s0, zero).metrics
         return float(m["reward/forward_velocity"]), float(m["reward/lateral_velocity"])
 
+    # symmetry 게이트: 돌기·옆걸음 명령은 좌우가 다른 게 당연하므로 대칭 요구를 낮춤 (7차 R9)
+    def symmetry_gate(command):
+        e = walk_mjx.BipedWalkMjxEnv(spec, reward_weights={"symmetry": -24.0})
+        s0 = jax.jit(e.reset)(jax.random.PRNGKey(0))
+        q = s0.pipeline_state.qpos.at[s0.info["q_hist"].shape[1] * 0 + 7].add(0.3)   # 한쪽 다리만 틀어 비대칭 만들기
+        s0 = s0.replace(pipeline_state=s0.pipeline_state.replace(qpos=q),
+                        info={**s0.info, "command": np.array(command, np.float32)})
+        return float(jax.jit(e.step)(s0, zero).metrics["reward/symmetry"])
+
+    straight = symmetry_gate((0.15, 0.0, 0.0))
+    assert straight < 0                                                   # 똑바로 걸을 때는 비대칭에 벌점
+    assert symmetry_gate((0.0, 0.08, 0.0)) == pytest.approx(0.0, abs=1e-9)   # 옆걸음 명령 끝 → 대칭 요구 0
+    assert symmetry_gate((0.0, 0.0, 0.3)) == pytest.approx(0.0, abs=1e-9)    # 제자리 돌기도 (예전부터)
+    assert straight < symmetry_gate((0.1, 0.04, 0.0)) < 0                    # 사이는 직선
+
     # 옆 명령이 있으면 밴드가 그만큼 좁아짐 (밴드보다 작은 명령을 무시해 버리는 것을 막음, 7차 R7)
     def lat_reward(deadband, command):
         e = walk_mjx.BipedWalkMjxEnv(dataclasses.replace(spec, lateral_deadband=deadband),

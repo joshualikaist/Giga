@@ -319,7 +319,9 @@ class BipedWalkMjxEnv(Env):
                 "yaw_rate": jnp.square(yaw_err),
                 "yaw_tracking": jnp.exp(-jnp.square(yaw_err) / 0.1),
                 "step_length": (speed > 0.03) * jnp.sum(real_step * jnp.clip(ahead_cmd, -0.2, target) / target),
-                "symmetry": asym * jnp.maximum(0.0, 1.0 - jnp.abs(c[2]) / 0.3),   # 돌 때는 좌우가 다른 게 당연
+                # 돌 때·옆걸음 때는 좌우가 다른 게 당연 → 그만큼 대칭 요구를 낮춤. 옆 게이트가 없으면 대칭 가중치를 올릴 때
+                # 정책이 옆걸음을 통째로 포기한다 (7차 R9에서 symmetry −24로 옆걸음 9·8 → 0·0 확인, docs/10 §12)
+                "symmetry": asym * jnp.maximum(0.0, 1.0 - jnp.abs(c[2]) / 0.3) * jnp.maximum(0.0, 1.0 - jnp.abs(c[1]) / 0.08),
                 "head_sway": jnp.square(head_lat - c[1]) * head_sway_gate(sp, c),   # 옆걸음 명령만큼은 움직여도 됨.
                                                                                        # 게이트: 뒤로·돌기 명령은 빼 줌 (6차)
                 "gait_phase": self._gait_phase_match(info["time"], contact, sp.gait_period,
