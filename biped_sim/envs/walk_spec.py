@@ -113,6 +113,8 @@ class WalkSpec:
     # 이상인 명령에서는 벌점 0 (사이는 직선). 벌점은 걸을 때마다 거의 같은 크기라, 추종 이득이 작은 뒤로·제자리 돌기 명령에서
     # '서 있기'를 고르게 만들었음 (docs/10 5차 R1b) → 그 명령들은 빼 줌
     head_sway_gate: tuple[float, float] | None = None
+    yaw_sigma2: float = 0.1               # [rad²/s²] yaw_tracking = exp(−오차² / 이 값). 0.1이면 오차 0.11 rad/s에도 0.89점이라
+    #                                       제자리 돌기가 0.4 → 0.29로 처져도 거의 안 깎임 (docs/10 §16)
     roll_free: float = 0.14               # [rad] roll_excess 벌점이 봐주는 몸통 구르기 (8°). 무게중심을 옮기는 데 필요한 양은 §8.6 기준 2.6°
     # 명령 추종 오차에서 봐주는 옆 속도 [m/s] (0 = 지금까지처럼 전부 벌점). 몸통을 수평으로 두고 무게중심을 좌우로 옮기는
     # 정상 걸음은 옆 속도가 최대 약 0.15 m/s인데, dead-band가 없으면 그 자체가 추종 오차로 잡혀 '구르기'가 더 싸진다 (docs/10 §12)
@@ -313,6 +315,8 @@ def spec_from_config(config: dict) -> WalkSpec:
         spec = replace(spec, clearance_target=float(config["clearance_target"]))
     if config.get("lateral_deadband"):                                           # --lateral-deadband
         spec = replace(spec, lateral_deadband=float(config["lateral_deadband"]))
+    if config.get("yaw_sigma2"):                                                 # --yaw-sigma2
+        spec = replace(spec, yaw_sigma2=float(config["yaw_sigma2"]))
     if config.get("roll_free") is not None:                                      # --roll-free
         spec = replace(spec, roll_free=float(config["roll_free"]))
     if config.get("head_sway_gate"):                                             # --head-sway-gate

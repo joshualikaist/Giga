@@ -209,6 +209,8 @@ def main():
     parser.add_argument("--lateral-deadband", type=float, default=None, metavar="V",
                         help="명령 추종 오차에서 봐주는 옆 속도 [m/s] (기본 0 = 전부 벌점). 몸통을 수평으로 두고 무게중심을 좌우로 "
                              "옮기는 정상 걸음은 옆 속도가 최대 약 0.15 m/s라, dead-band가 없으면 '구르기'가 더 싸짐 (docs/10 §12)")
+    parser.add_argument("--yaw-sigma2", type=float, default=None, metavar="S2",
+                        help="yaw_tracking 보상 폭 exp(−오차²/S2) (기본 0.1). 작을수록 회전 오차를 엄하게 (docs/10 §16)")
     parser.add_argument("--roll-free", type=float, default=None, metavar="RAD",
                         help="roll_excess 벌점이 봐주는 몸통 구르기 [rad] (기본 0.14 = 8°)")
     parser.add_argument("--head-sway-gate", type=float, nargs=2, default=None, metavar=("뒤", "회전"),
@@ -272,7 +274,7 @@ def main():
         import dataclasses
         spec = dataclasses.replace(spec, head_sway_gate=tuple(args.head_sway_gate))
     import dataclasses
-    for name in ("clearance_target", "lateral_deadband", "roll_free"):
+    for name in ("clearance_target", "lateral_deadband", "roll_free", "yaw_sigma2"):
         if getattr(args, name) is not None:
             spec = dataclasses.replace(spec, **{name: getattr(args, name)})
     commands = None
@@ -318,7 +320,7 @@ def main():
         "command_obs": commands is not None, "commands": commands,
         "double_support_fast": args.double_support_fast, "fast_speed": args.fast_speed,
         "head_sway_gate": args.head_sway_gate, "clearance_target": spec.clearance_target,
-        "lateral_deadband": spec.lateral_deadband, "roll_free": spec.roll_free,
+        "lateral_deadband": spec.lateral_deadband, "roll_free": spec.roll_free, "yaw_sigma2": spec.yaw_sigma2,
         "terrain": None if args.terrain == "flat" else {"kind": "training", "seed": args.terrain_seed, "half_size": 6.0,
                                                         "resolution": 0.08,
                                                         "difficulty": list(args.terrain_difficulty or (0.4, 1.2))},

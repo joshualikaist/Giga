@@ -247,6 +247,16 @@ def test_motor_range_widens_weak_motors():
     assert default.motor_range == (1 - walk_mjx.DOMAIN_RAND["motor"], 1 + walk_mjx.DOMAIN_RAND["motor"])
 
 
+def test_yaw_sigma2_sharpens_turn_tracking():
+    """--yaw-sigma2: yaw_tracking = exp(−오차²/σ²)의 폭. 설정에서 읽히고, 좁히면 같은 회전 오차(0.11 rad/s)가 더 깎인다 (docs/10 §16)."""
+    base = {"robot": "open_duck_mini", "servo": "open_duck", "command_obs": True}
+    assert walk_mjx.spec_from_config(base).yaw_sigma2 == 0.1
+    sharp = walk_mjx.spec_from_config({**base, "yaw_sigma2": 0.03})
+    assert sharp.yaw_sigma2 == 0.03
+    err = 0.11
+    assert np.exp(-err ** 2 / sharp.yaw_sigma2) < 0.7 < np.exp(-err ** 2 / 0.1)
+
+
 def test_obs_history_and_parameter_expansion(tmp_path):
     """관측 기록(--obs-history): ① 학습 환경은 지금 관측 뒤에 지난 관측을 한 칸씩 밀며 붙이고, 일반 MuJoCo 재생기도 같다.
     ② 기록 없이 학습한 정책을 기록 받는 정책으로 늘리면(새 입력 가중치 0) 같은 상황에서 같은 행동을 낸다."""
