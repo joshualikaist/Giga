@@ -222,6 +222,8 @@ def main():
     parser.add_argument("--domain-rand", action="store_true",
                         help="실물과의 차이 대비: 환경마다 몸통 질량 ±15 %%, 모터 세기 ±15 %%, 무게중심 ±1 cm, 제어 지연 0/20 ms "
                              "(walk_mjx.DOMAIN_RAND)")
+    parser.add_argument("--motor-range", type=float, nargs=2, default=None, metavar=("LO", "HI"),
+                        help="--domain-rand의 모터 세기 배율 범위 (기본 0.85 1.15). 배터리 처짐 대비로 아래를 넓힘 (docs/10 §15)")
     parser.add_argument("--home-knee", type=float, default=None, metavar="RAD",
                         help="서 있는 자세의 무릎 각도 (오리 기본 0.8). 덜 굽히면 한 발 버티는 무릎 토크가 줄어듦 (docs/09 §9.5)")
     parser.add_argument("--init-from", type=Path, default=None, metavar="정책.pkl",
@@ -311,7 +313,8 @@ def main():
         "action_scale": spec.action_scale, "reward_weights": {**spec.reward_weights, **overrides},
         "servo": args.servo, "friction_range": args.friction, "home_knee": args.home_knee, "push": args.push,
         "deployable_obs": args.deployable_obs, "privileged_critic": args.privileged_critic,
-        "domain_rand": dict(walk_mjx.DOMAIN_RAND) if args.domain_rand else None, "obs_history": args.obs_history,
+        "domain_rand": ({**walk_mjx.DOMAIN_RAND, **({"motor_range": list(args.motor_range)} if args.motor_range else {})}
+                        if args.domain_rand else None), "obs_history": args.obs_history,
         "command_obs": commands is not None, "commands": commands,
         "double_support_fast": args.double_support_fast, "fast_speed": args.fast_speed,
         "head_sway_gate": args.head_sway_gate, "clearance_target": spec.clearance_target,
@@ -367,7 +370,7 @@ def main():
                                    spawn_area=spawn_area, friction_range=args.friction,
                                    push=tuple(args.push) if args.push else None, obs_noise=args.deployable_obs,
                                    privileged_critic=args.privileged_critic, domain_rand=args.domain_rand,
-                                   commands=commands)
+                                   motor_range=tuple(args.motor_range) if args.motor_range else None, commands=commands)
     # flush_secs=5: 기록을 5초마다 파일에 씀 (기본 120초면 TensorBoard·학습 화면 그래프가 최대 2분 늦게 보임)
     writer = SummaryWriter(str(run_dir), flush_secs=5)
     t_start = time.perf_counter()

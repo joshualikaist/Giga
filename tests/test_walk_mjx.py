@@ -235,6 +235,18 @@ def test_domain_randomization_and_delay():
     assert moved_delayed < 0.3 * moved_now
 
 
+def test_motor_range_widens_weak_motors():
+    """--motor-range: 모터 세기 배율이 주어진 범위에서 뽑힌다 (기본 1 ± 0.15). 배터리 처짐 대비로 아래를 넓힘 (docs/10 §15)."""
+    import jax
+
+    spec = walk_mjx.SPECS["open_duck_mini"]
+    env = walk_mjx.BipedWalkMjxEnv(spec, domain_rand=True, motor_range=(0.55, 0.6))
+    scales = [float(env.reset(jax.random.PRNGKey(k)).info["motor_scale"]) for k in range(4)]
+    assert all(0.55 <= s <= 0.6 for s in scales)
+    default = walk_mjx.BipedWalkMjxEnv(spec, domain_rand=True)
+    assert default.motor_range == (1 - walk_mjx.DOMAIN_RAND["motor"], 1 + walk_mjx.DOMAIN_RAND["motor"])
+
+
 def test_obs_history_and_parameter_expansion(tmp_path):
     """관측 기록(--obs-history): ① 학습 환경은 지금 관측 뒤에 지난 관측을 한 칸씩 밀며 붙이고, 일반 MuJoCo 재생기도 같다.
     ② 기록 없이 학습한 정책을 기록 받는 정책으로 늘리면(새 입력 가중치 0) 같은 상황에서 같은 행동을 낸다."""

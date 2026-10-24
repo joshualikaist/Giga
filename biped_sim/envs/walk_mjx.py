@@ -59,6 +59,7 @@ class BipedWalkMjxEnv(Env):
     def __init__(self, spec: WalkSpec | str = "simple_biped", target_speed: float | None = None,
                  reward_weights: dict | None = None, terrain=None, spawn_area=None, friction_range=None, push=None,
                  obs_noise: bool = False, privileged_critic: bool = False, domain_rand: bool = False,
+                 motor_range: tuple[float, float] | None = None,
                  commands: dict | None = None):
         """spec: SPECS의 이름 또는 WalkSpec. target_speed: None이면 spec 기본값.
         reward_weights: 바꿀 항목만 {이름: 가중치}로 (예: {"heading": -1.0}).
@@ -71,6 +72,8 @@ class BipedWalkMjxEnv(Env):
         privileged_critic: 비대칭 actor-critic. 관측을 {"state": 정책이 보는 것(실물 관측·잡음), "privileged_state": 가리지 않은
             전체 값(잡음 없음)}로 줌 → 학습 중 점수만 매기는 critic(가치 함수)은 시뮬레이션의 모든 정보를 씀 (실물에 올리는 것은 정책뿐)
         domain_rand: 환경마다 몸통 질량·모터 세기·무게중심·제어 지연을 DOMAIN_RAND 범위에서 무작위로 (실물과의 차이 대비)
+        motor_range: 모터 세기 배율 범위 (최소, 최대). None이면 1 ± DOMAIN_RAND["motor"]. 배터리 전압이 처지면(7.4 → 6 V)
+            토크가 0.8배쯤이라 아래쪽을 더 넓게 (docs/10 §14·§15)
         commands: 명령 따라 걷기의 명령 범위 {"vx": (최소, 최대), "vy": ..., "wz": ..., "resample": 초} (spec.command_obs 필요).
             None이면 명령 = (target_speed, 0, 0) 고정"""
         self.spec = SPECS[spec] if isinstance(spec, str) else spec
@@ -82,6 +85,7 @@ class BipedWalkMjxEnv(Env):
         self.terrain, self.spawn_area, self.friction_range, self.push = terrain, spawn_area, friction_range, push
         self.privileged_critic = privileged_critic
         self.domain_rand = domain_rand
+        self.motor_range = motor_range or (1 - DOMAIN_RAND["motor"], 1 + DOMAIN_RAND["motor"])
         if commands and not sp.command_obs:
             raise ValueError("명령 범위(commands)는 command_obs인 과제에서만 씁니다")
         self.commands = {**COMMANDS_DEFAULT, **commands} if commands else None
@@ -178,7 +182,7 @@ class BipedWalkMjxEnv(Env):
             km, ks, kc, kd = jax.random.split(jax.random.fold_in(k3, 7), 4)
             r = DOMAIN_RAND
             info["mass_scale"] = jax.random.uniform(km, (), minval=1 - r["mass"], maxval=1 + r["mass"])
-            info["motor_scale"] = jax.random.uniform(ks, (), minval=1 - r["motor"], maxval=1 + r["motor"])
+            info["motor_scale"] = jax.random.uniform(ks, (), minval=self.motor_range[0], maxval=self.motor_range[1])
             info["com_offset"] = jax.random.uniform(kc, (2,), minval=-r["com"], maxval=r["com"])
             info["delay"] = jax.random.randint(kd, (), 0, r["delay"] + 1)
             info["act_hist"] = jnp.zeros((r["delay"], n))   # 지난 행동들 [1스텝 전, 2스텝 전, ...]
