@@ -76,7 +76,8 @@ GAIT_METRICS = ("flight", "single", "double", "phase_match", "abs_heading", "leg
 # 명령 따라 걷기 (--cmd-*): 명령 = (앞뒤 속도 vx, 옆 속도 vy [m/s], 회전 속도 wz [rad/s]), 몸통이 향한 방향 기준.
 # 학습 때는 환경마다 이 범위에서 뽑고, resample초마다 새로 뽑음 (걷는 중에 명령이 바뀌는 것도 연습)
 # zero_prob: 성분마다 이 확률로 정확히 0 (범위가 0을 포함할 때만) → '제자리 돌기', '옆으로만', '뒤로만' 같은 명령이 자주 나옴
-COMMANDS_DEFAULT = {"vx": (0.05, 0.25), "vy": (0.0, 0.0), "wz": (0.0, 0.0), "resample": 5.0, "zero_prob": 0.0}
+# turn_prob: 이 확률로 '제자리 돌기' 명령 (0, 0, ±0.25 ~ wz 최대)을 따로 뽑음. 성분별 0만으로는 제자리 돌기(|wz| ≥ 0.3)가 약 3 %뿐 (docs/10 §16)
+COMMANDS_DEFAULT = {"vx": (0.05, 0.25), "vy": (0.0, 0.0), "wz": (0.0, 0.0), "resample": 5.0, "zero_prob": 0.0, "turn_prob": 0.0}
 
 
 @dataclass(frozen=True)

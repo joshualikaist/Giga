@@ -257,6 +257,28 @@ def test_yaw_sigma2_sharpens_turn_tracking():
     assert np.exp(-err ** 2 / sharp.yaw_sigma2) < 0.7 < np.exp(-err ** 2 / 0.1)
 
 
+def test_turn_prob_samples_in_place_turns():
+    """--cmd-turn-prob: 그 확률로 제자리 돌기 (0, 0, ±0.25~최대)가 나온다. 0이면 원래 분포 그대로 (docs/10 §16)."""
+    import jax
+
+    import dataclasses
+
+    spec = dataclasses.replace(walk_mjx.SPECS["open_duck_mini"], command_obs=True)
+    cmds = {"vx": (-0.2, 0.4), "vy": (-0.15, 0.15), "wz": (-0.5, 0.5), "resample": 5.0, "zero_prob": 0.35}
+    keys = jax.random.split(jax.random.PRNGKey(0), 2000)
+
+    def turn_share(turn_prob):
+        env = walk_mjx.BipedWalkMjxEnv(spec, commands={**cmds, "turn_prob": turn_prob})
+        c = np.asarray(jax.vmap(env._sample_command)(keys))
+        in_place = (c[:, 0] == 0) & (c[:, 1] == 0) & (np.abs(c[:, 2]) >= 0.25)
+        return in_place.mean(), c
+
+    base, _ = turn_share(0.0)
+    more, c = turn_share(0.1)
+    assert base < 0.06 and 0.11 < more < 0.2
+    assert np.abs(c[:, 2]).max() <= 0.5 and (c[:, 2] > 0.25).any() and (c[:, 2] < -0.25).any()
+
+
 def test_obs_history_and_parameter_expansion(tmp_path):
     """관측 기록(--obs-history): ① 학습 환경은 지금 관측 뒤에 지난 관측을 한 칸씩 밀며 붙이고, 일반 MuJoCo 재생기도 같다.
     ② 기록 없이 학습한 정책을 기록 받는 정책으로 늘리면(새 입력 가중치 0) 같은 상황에서 같은 행동을 낸다."""

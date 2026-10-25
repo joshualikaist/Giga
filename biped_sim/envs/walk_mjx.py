@@ -419,10 +419,16 @@ class BipedWalkMjxEnv(Env):
         """명령 범위에서 (vx, vy, wz)를 고르게 뽑음. 성분마다 zero_prob 확률로 0 (범위가 0을 포함하면)."""
         lo = jnp.array([self.commands[k][0] for k in ("vx", "vy", "wz")])
         hi = jnp.array([self.commands[k][1] for k in ("vx", "vy", "wz")])
-        k1, k2 = jax.random.split(key)
+        k1, k2, k3, k4 = jax.random.split(key, 4)
         cmd = jax.random.uniform(k1, (3,), minval=lo, maxval=hi)
         zero = (jax.random.uniform(k2, (3,)) < self.commands["zero_prob"]) & (lo <= 0) & (hi >= 0)
-        return jnp.where(zero, 0.0, cmd)
+        cmd = jnp.where(zero, 0.0, cmd)
+        # 제자리 돌기를 따로 더 (turn_prob): 앞뒤·옆 0, 회전 크기 0.25 ~ 범위 최대, 방향 반반
+        wz_max = jnp.minimum(-lo[2], hi[2])
+        turn = jnp.array([0.0, 0.0, jnp.where(jax.random.uniform(k4) < 0.5, -1.0, 1.0)
+                          * jax.random.uniform(k3, (), minval=jnp.minimum(0.25, wz_max), maxval=wz_max)])
+        pick = jax.random.uniform(jax.random.fold_in(k4, 1)) < self.commands.get("turn_prob", 0.0)
+        return jnp.where(pick, turn, cmd)
 
     def _servo_overload(self, taus, dqs):
         """제어 스텝 동안(물리 스텝 n개) 모터 토크가 서보 데이터시트 한계를 넘은 정도.
